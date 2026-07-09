@@ -1,0 +1,39 @@
+{
+  "name": "mcp-scryfall",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "MCP (Model Context Protocol) server for live Magic: The Gathering card lookup via the Scryfall API.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "scryfall",
+    "mtg",
+    "magic-the-gathering",
+    "llm",
+    "ai"
+  ],
+  "license": "MIT",
+  "author": "Abishai James",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/haksanlulz/mcp-scryfall.git"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "tsx index.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "smoke": "tsx smoke.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}
