@@ -1,36 +1,34 @@
 #!/usr/bin/env -S npx tsx
-// hits the live scryfall api directly (not via mcp stdio); needs network
-const SCRYFALL = "https://api.scryfall.com";
-const UA = "mcp-scryfall/1.0 smoke-test (https://github.com/haksanlulz/mcp-scryfall)";
+// Live smoke: one real call per tool, driven in-process over MCP (InMemoryTransport)
+// so it exercises THIS server, not the Scryfall API directly. Scryfall needs no key;
+// needs network.
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { createServer } from "./server.js";
 
-// expectOk=true means the call must return a real hit; only the error-probe passes on object:"error"
-async function check(label: string, path: string, expectOk = true): Promise<void> {
-  const res = await fetch(`${SCRYFALL}${path}`, {
-    headers: { "User-Agent": UA, Accept: "application/json" },
-  });
-  const text = await res.text();
-  let json: Record<string, unknown>;
+const server = createServer();
+const client = new Client({ name: "smoke", version: "1.0.0" }, { capabilities: {} });
+const [ct, st] = InMemoryTransport.createLinkedPair();
+await Promise.all([server.connect(st), client.connect(ct)]);
+
+let failed = 0;
+async function check(name: string, args: Record<string, unknown>, ok: (b: any) => boolean) {
   try {
-    json = JSON.parse(text) as Record<string, unknown>;
-  } catch {
-    console.error(`FAIL ${label}: non-JSON status=${res.status} body=${text.slice(0, 200)}`);
-    process.exit(1);
+    const res: any = await client.callTool({ name, arguments: args });
+    const body = JSON.parse(res.content[0].text);
+    if (ok(body)) console.log(`ok   ${name}`);
+    else { failed++; console.error(`FAIL ${name}: unexpected shape\n${JSON.stringify(body).slice(0, 300)}`); }
+  } catch (e: any) {
+    failed++;
+    console.error(`FAIL ${name}: ${e.message}`);
   }
-  const ok = expectOk ? res.ok : json.object === "error";
-  if (ok) {
-    console.log(`PASS ${label}: status=${res.status} object=${json.object} ${'name' in json ? `name=${json.name}` : ''}`);
-  } else {
-    console.error(`FAIL ${label}: status=${res.status} body=${JSON.stringify(json).slice(0, 200)}`);
-    process.exit(1);
-  }
-  await new Promise((r) => setTimeout(r, 120));
 }
 
-await check("card_named (Muldrotha)", "/cards/named?exact=Muldrotha%2C+the+Gravetide");
-await check("card_fuzzy (heartmender)", "/cards/named?fuzzy=heartmender");
-await check("card_search (is:fetchland)", "/cards/search?q=is%3Afetchland");
-await check("card_random", "/cards/random");
-await check("bulk_default", "/bulk-data");
-// error-path probe: a bogus exact name must return object:"error", not a hit
-await check("error-shape (bogus name)", "/cards/named?exact=zzznotacardzzz", false);
-console.log("=== all smoke PASS ===");
+await check("card_named", { name: "Black Lotus" }, (b) => b.name === "Black Lotus");
+await check("card_fuzzy", { name: "jace belren" }, (b) => typeof b.name === "string" && /jace/i.test(b.name));
+await check("card_search", { q: "is:fetchland" }, (b) => typeof b.total_cards === "number" && Array.isArray(b.data) && b.data.length > 0);
+await check("card_random", {}, (b) => typeof b.name === "string" && b.name.length > 0);
+await check("bulk_default", {}, (b) => Array.isArray(b.data) && b.data.length > 0 && typeof b.data[0].download_uri === "string");
+
+console.log(failed === 0 ? "smoke: all passed" : `smoke: ${failed} FAILED`);
+process.exit(failed === 0 ? 0 : 1);

@@ -6,7 +6,7 @@ import {
 
 // scryfall etiquette: ~100ms between requests + descriptive UA; SCRYFALL_CONTACT env adds a contact
 const SCRYFALL = "https://api.scryfall.com";
-// || not ?? — an empty SCRYFALL_CONTACT would still need the fallback
+// || not ?? because an empty SCRYFALL_CONTACT would still need the fallback
 const CONTACT =
   process.env.SCRYFALL_CONTACT || "https://github.com/haksanlulz/mcp-scryfall";
 const UA = `mcp-scryfall/1.0 (${CONTACT})`;
@@ -36,15 +36,25 @@ async function scryfallGet(path: string): Promise<any> {
   return rateLimited(async () => {
     const res = await fetch(`${SCRYFALL}${path}`, {
       headers: { "User-Agent": UA, Accept: "application/json" },
+      // bound every request: without this a single hung fetch wedges the whole
+      // serialized queue and blocks every later tool call for the process lifetime
+      signal: AbortSignal.timeout(15_000),
     });
     const body = await res.text();
+    let json: any;
     try {
-      return JSON.parse(body);
+      json = JSON.parse(body);
     } catch {
       throw new Error(
         `Scryfall ${path} returned non-JSON (status ${res.status}): ${body.slice(0, 200)}`,
       );
     }
+    if (!res.ok) {
+      // Scryfall error bodies are {object:"error", code, status, details}; surface details
+      const detail = json?.details ?? body.slice(0, 200);
+      throw new Error(`Scryfall ${path} error (status ${res.status}): ${detail}`);
+    }
+    return json;
   });
 }
 
@@ -69,7 +79,7 @@ const TOOLS = [
   {
     name: "card_named",
     description:
-      "Exact-name lookup of a Magic card. Returns the full Scryfall card object (oracle_text, mana_cost, type_line, P/T, legalities, etc.) on a hit, or a structured 404 object on a miss. Use when the caller has the exact card name.",
+      "Exact-name lookup of a Magic card. Returns the full Scryfall card object (oracle_text, mana_cost, type_line, P/T, legalities, etc.) on a hit. A miss (no card by that exact name) surfaces as an error carrying Scryfall's details; try card_fuzzy instead. Use when the caller has the exact card name.",
     inputSchema: {
       type: "object",
       properties: {
@@ -85,7 +95,7 @@ const TOOLS = [
   {
     name: "card_fuzzy",
     description:
-      "Fuzzy-name lookup of a Magic card. Handles typos, partial names, and alternate spellings. Returns the full card object, or a 404 if there is no close match. Use when the caller's spelling may be wrong or incomplete.",
+      "Fuzzy-name lookup of a Magic card. Handles typos, partial names, and alternate spellings. Returns the full card object; no close match surfaces as an error carrying Scryfall's details. Use when the caller's spelling may be wrong or incomplete.",
     inputSchema: {
       type: "object",
       properties: {
@@ -162,7 +172,7 @@ export function createServer(): Server {
           ? `&order=${encodeURIComponent(String(args.order))}`
           : "";
         const data: any = await scryfallGet(`/cards/search?q=${q}${page}${order}`);
-        // summaries by default — full objects on a broad search burn tokens; full:true for raw
+        // summaries by default: full objects on a broad search burn tokens; full:true for raw
         if (args.full || data?.object === "error") return asText(data);
         return asText({
           total_cards: data?.total_cards,
