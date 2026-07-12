@@ -10,7 +10,8 @@ LLMs misremember card names, costs, and rules text. This looks them up on live S
 |------|--------------|
 | `card_named` | Exact-name lookup (optional set code). Full card object. |
 | `card_fuzzy` | Fuzzy-name lookup. Handles typos and partial names. |
-| `card_search` | [Scryfall query-syntax](https://scryfall.com/docs/syntax) search. Returns compact summaries by default (pass `full: true` for raw objects). |
+| `card_search` | [Scryfall query-syntax](https://scryfall.com/docs/syntax) search. Returns compact summaries (name, cost, type, `oracle_text`) by default (pass `full: true` for raw objects). |
+| `card_collection` | Batch lookup (`POST /cards/collection`) — resolve a whole decklist in one call. Takes exact-name strings and/or `{name}` / `{id}` / `{set, collector_number}` identifiers; misses come back in `not_found`. |
 | `card_random` | A random card, optionally filtered by a query. |
 | `bulk_default` | Lists Scryfall bulk-data endpoints for offline corpus building. |
 
@@ -26,7 +27,7 @@ Runs directly with [`tsx`](https://github.com/privatenumber/tsx); no build step.
 
 ## Use it from an MCP client
 
-Add it to your client's MCP config (e.g. Claude Desktop's `claude_desktop_config.json`):
+Add it to your client's MCP config:
 
 ```json
 {
@@ -42,9 +43,9 @@ Add it to your client's MCP config (e.g. Claude Desktop's `claude_desktop_config
 
 `SCRYFALL_CONTACT` is optional; it is added to the `User-Agent` per Scryfall's API guidelines.
 
-## Example
+## Examples
 
-`card_search` with `q = "c:rb cmc<=2 t:creature o:haste"` returns compact rows plus paging metadata:
+`card_search` with `q = "c:rb cmc<=2 t:creature o:haste"` returns compact rows — rules text included — plus paging metadata:
 
 ```json
 {
@@ -52,12 +53,35 @@ Add it to your client's MCP config (e.g. Claude Desktop's `claude_desktop_config
   "has_more": false,
   "page": 1,
   "data": [
-    { "name": "Dreadhorde Butcher", "mana_cost": "{B}{R}", "type_line": "Creature — Zombie Warrior", "cmc": 2, "set": "war" }
+    {
+      "name": "Dreadhorde Butcher",
+      "mana_cost": "{B}{R}",
+      "type_line": "Creature — Zombie Warrior",
+      "cmc": 2,
+      "set": "war",
+      "oracle_text": "Haste\nWhenever this creature deals combat damage to a player or planeswalker, put a +1/+1 counter on this creature.\nWhen this creature dies, it deals damage equal to its power to any target."
+    }
   ]
 }
 ```
 
-Pass `full: true` to get the raw Scryfall objects instead.
+`card_collection` with `identifiers = ["Lightning Bolt", "Counterspell", "Zzzz Definitely Not A Card"]` resolves the whole list in one call and leads with what it couldn't find:
+
+```json
+{
+  "requested": 3,
+  "found": 2,
+  "not_found": [{ "name": "Zzzz Definitely Not A Card" }],
+  "data": [
+    { "name": "Lightning Bolt", "mana_cost": "{R}", "type_line": "Instant", "cmc": 1, "set": "msc", "oracle_text": "Lightning Bolt deals 3 damage to any target." },
+    { "name": "Counterspell", "mana_cost": "{U}{U}", "type_line": "Instant", "cmc": 2, "set": "dsc", "oracle_text": "Counter target spell." }
+  ]
+}
+```
+
+Scryfall caps one collection POST at 75 identifiers; longer lists are split into sequential rate-limited POSTs automatically, so a 100-card decklist is one tool call (two requests under the hood).
+
+Pass `full: true` to either tool to get the raw Scryfall objects instead.
 
 ## Develop
 
@@ -69,7 +93,7 @@ npm run typecheck
 
 ## API etiquette
 
-Follows [Scryfall's guidelines](https://scryfall.com/docs/api): a 100 ms delay between requests, a descriptive `User-Agent`, and `Accept: application/json`.
+Follows [Scryfall's guidelines](https://scryfall.com/docs/api): a 100 ms delay between requests, a descriptive `User-Agent`, and `Accept: application/json`. `card_collection` never posts more than Scryfall's cap of 75 identifiers per request; chunked requests go through the same delay queue.
 
 ## License
 

@@ -32,26 +32,34 @@ function rateLimited<T>(fn: () => Promise<T>): Promise<T> {
   return run;
 }
 
-async function scryfallGet(path: string): Promise<any> {
+// single owner of the fetch shape (UA, Accept, timeout, JSON + error handling);
+// GET by default, POST with a JSON body when one is given
+async function scryfallRequest(path: string, body?: unknown): Promise<any> {
   return rateLimited(async () => {
     const res = await fetch(`${SCRYFALL}${path}`, {
-      headers: { "User-Agent": UA, Accept: "application/json" },
+      method: body === undefined ? "GET" : "POST",
+      headers: {
+        "User-Agent": UA,
+        Accept: "application/json",
+        ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       // bound every request: without this a single hung fetch wedges the whole
       // serialized queue and blocks every later tool call for the process lifetime
       signal: AbortSignal.timeout(15_000),
     });
-    const body = await res.text();
+    const raw = await res.text();
     let json: any;
     try {
-      json = JSON.parse(body);
+      json = JSON.parse(raw);
     } catch {
       throw new Error(
-        `Scryfall ${path} returned non-JSON (status ${res.status}): ${body.slice(0, 200)}`,
+        `Scryfall ${path} returned non-JSON (status ${res.status}): ${raw.slice(0, 200)}`,
       );
     }
     if (!res.ok) {
       // Scryfall error bodies are {object:"error", code, status, details}; surface details
-      const detail = json?.details ?? body.slice(0, 200);
+      const detail = json?.details ?? raw.slice(0, 200);
       throw new Error(`Scryfall ${path} error (status ${res.status}): ${detail}`);
     }
     return json;
@@ -68,7 +76,30 @@ function summarizeCard(card: any) {
     type_line: card.type_line,
     cmc: card.cmc,
     set: card.set,
+    // rules text is the point of this server; without it every summary row
+    // costs a card_named round-trip. Same per-face fallback as mana_cost,
+    // joined with the divider on its own line since faces are multi-line prose.
+    oracle_text:
+      card.oracle_text ??
+      card.card_faces?.map((f: any) => f.oracle_text).filter(Boolean).join("\n//\n"),
   };
+}
+
+// Scryfall caps POST /cards/collection at 75 identifiers per request
+const COLLECTION_MAX = 75;
+
+// strings are a {name} shorthand; objects pass through as Scryfall identifiers
+// ({name}, {id}, {name, set}, {set, collector_number}, ...) for Scryfall to validate
+function toIdentifier(raw: unknown): Record<string, unknown> {
+  if (typeof raw === "string") {
+    const name = raw.trim();
+    if (name) return { name };
+  } else if (raw && typeof raw === "object" && !Array.isArray(raw) && Object.keys(raw).length > 0) {
+    return raw as Record<string, unknown>;
+  }
+  throw new Error(
+    `card_collection: invalid identifier ${JSON.stringify(raw)} — expected a card-name string or an identifier object like {name}, {id}, or {set, collector_number}`,
+  );
 }
 
 function asText(value: unknown) {
@@ -126,6 +157,43 @@ const TOOLS = [
     },
   },
   {
+    name: "card_collection",
+    description:
+      "Batch lookup of many cards in one call (POST /cards/collection) — use this for decklists instead of one card_named call per card. Identifiers are exact-name strings (not fuzzy) and/or Scryfall identifier objects: {name}, {id}, {name, set}, {set, collector_number}. Scryfall caps one POST at 75 identifiers; longer lists are chunked into sequential rate-limited POSTs transparently. Returns {requested, found, not_found, data}: check not_found — it lists the identifiers Scryfall could not resolve. data holds compact summaries (with oracle_text) by default; pass full:true for raw card objects.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        identifiers: {
+          type: "array",
+          minItems: 1,
+          description:
+            "Cards to fetch: exact-name strings and/or identifier objects ({name}, {id}, {name, set}, {set, collector_number})",
+          items: {
+            anyOf: [
+              { type: "string", description: "Exact card name" },
+              {
+                type: "object",
+                description:
+                  "Scryfall identifier object: {name}, {id}, {name, set}, or {set, collector_number}",
+                properties: {
+                  name: { type: "string", description: "Exact card name" },
+                  id: { type: "string", description: "Scryfall card UUID" },
+                  set: { type: "string", description: "Set code (with name or collector_number)" },
+                  collector_number: { type: "string", description: "Collector number (with set)" },
+                },
+              },
+            ],
+          },
+        },
+        full: {
+          type: "boolean",
+          description: "Return raw Scryfall card objects instead of compact summaries (default false)",
+        },
+      },
+      required: ["identifiers"],
+    },
+  },
+  {
     name: "card_random",
     description:
       "A random Magic card. An optional q= filter uses the same Scryfall query syntax as card_search. Returns the full card object.",
@@ -159,11 +227,11 @@ export function createServer(): Server {
         const n = encodeURIComponent(String(args.name));
         let path = `/cards/named?exact=${n}`;
         if (args.set) path += `&set=${encodeURIComponent(String(args.set))}`;
-        return asText(await scryfallGet(path));
+        return asText(await scryfallRequest(path));
       }
       case "card_fuzzy": {
         const n = encodeURIComponent(String(args.name));
-        return asText(await scryfallGet(`/cards/named?fuzzy=${n}`));
+        return asText(await scryfallRequest(`/cards/named?fuzzy=${n}`));
       }
       case "card_search": {
         const q = encodeURIComponent(String(args.q));
@@ -171,7 +239,7 @@ export function createServer(): Server {
         const order = args.order
           ? `&order=${encodeURIComponent(String(args.order))}`
           : "";
-        const data: any = await scryfallGet(`/cards/search?q=${q}${page}${order}`);
+        const data: any = await scryfallRequest(`/cards/search?q=${q}${page}${order}`);
         // summaries by default: full objects on a broad search burn tokens; full:true for raw
         if (args.full || data?.object === "error") return asText(data);
         return asText({
@@ -181,13 +249,40 @@ export function createServer(): Server {
           data: Array.isArray(data?.data) ? data.data.map(summarizeCard) : [],
         });
       }
+      case "card_collection": {
+        if (!Array.isArray(args.identifiers) || args.identifiers.length === 0) {
+          throw new Error(
+            "card_collection requires a non-empty identifiers array (card-name strings or identifier objects)",
+          );
+        }
+        const identifiers = args.identifiers.map(toIdentifier);
+        // >75 identifiers: sequential POSTs through the same rate-limited queue,
+        // merged back into one response
+        const found: any[] = [];
+        const notFound: any[] = [];
+        for (let i = 0; i < identifiers.length; i += COLLECTION_MAX) {
+          const chunk = identifiers.slice(i, i + COLLECTION_MAX);
+          const page: any = await scryfallRequest("/cards/collection", {
+            identifiers: chunk,
+          });
+          if (Array.isArray(page?.data)) found.push(...page.data);
+          if (Array.isArray(page?.not_found)) notFound.push(...page.not_found);
+        }
+        // not_found leads so a decklist miss can't hide under dozens of hits
+        return asText({
+          requested: identifiers.length,
+          found: found.length,
+          not_found: notFound,
+          data: args.full ? found : found.map(summarizeCard),
+        });
+      }
       case "card_random": {
         let path = "/cards/random";
         if (args.q) path += `?q=${encodeURIComponent(String(args.q))}`;
-        return asText(await scryfallGet(path));
+        return asText(await scryfallRequest(path));
       }
       case "bulk_default":
-        return asText(await scryfallGet("/bulk-data"));
+        return asText(await scryfallRequest("/bulk-data"));
       default:
         throw new Error(`Unknown tool: ${name}`);
     }

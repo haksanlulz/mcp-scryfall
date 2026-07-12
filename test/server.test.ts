@@ -28,11 +28,12 @@ function bodyOf(res: any) {
 describe("mcp-scryfall server", () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it("exposes all five tools", async () => {
+  it("exposes all six tools", async () => {
     const client = await connect();
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
       "bulk_default",
+      "card_collection",
       "card_fuzzy",
       "card_named",
       "card_random",
@@ -117,14 +118,17 @@ describe("mcp-scryfall server", () => {
     const out = bodyOf(res);
     expect(out.total_cards).toBe(2);
     expect(out.data).toHaveLength(2);
+    // oracle_text rides along in summaries: rules-text grounding is the point,
+    // and omitting it forced a card_named round-trip per result
     expect(out.data[0]).toEqual({
       name: "Ash Zealot",
       mana_cost: "{R}{R}",
       type_line: "Creature — Goblin Berserker",
       cmc: 2,
       set: "rtr",
+      oracle_text: "First strike, haste",
     });
-    expect(out.data[0].oracle_text).toBeUndefined();
+    expect(out.data[1].oracle_text).toBe("Haste");
   });
 
   it("card_search full:true returns the raw response", async () => {
@@ -145,7 +149,7 @@ describe("mcp-scryfall server", () => {
     expect(bodyOf(res).data[0].oracle_text).toBe("First strike, haste");
   });
 
-  it("card_search pulls mana_cost from card_faces for double-faced cards", async () => {
+  it("card_search pulls mana_cost and oracle_text from card_faces for double-faced cards", async () => {
     vi.stubGlobal(
       "fetch",
       mockFetch({
@@ -159,8 +163,8 @@ describe("mcp-scryfall server", () => {
             cmc: 4,
             set: "dka",
             card_faces: [
-              { mana_cost: "{2}{R}{G}" },
-              { mana_cost: "" },
+              { mana_cost: "{2}{R}{G}", oracle_text: "Front face text." },
+              { mana_cost: "", oracle_text: "Back face text." },
             ],
           },
         ],
@@ -171,7 +175,28 @@ describe("mcp-scryfall server", () => {
       name: "card_search",
       arguments: { q: "t:werewolf" },
     });
-    expect(bodyOf(res).data[0].mana_cost).toBe("{2}{R}{G}");
+    const card = bodyOf(res).data[0];
+    expect(card.mana_cost).toBe("{2}{R}{G}");
+    // faces join on a line of their own so multi-line rules text stays readable
+    expect(card.oracle_text).toBe("Front face text.\n//\nBack face text.");
+  });
+
+  it("card_search summaries omit oracle_text only when the card truly has none", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch({
+        object: "list",
+        total_cards: 1,
+        has_more: false,
+        data: [{ name: "Oddity", type_line: "Artifact", cmc: 0, set: "xxx" }],
+      }),
+    );
+    const client = await connect();
+    const res = await client.callTool({
+      name: "card_search",
+      arguments: { q: "oddity" },
+    });
+    expect(bodyOf(res).data[0].oracle_text).toBeUndefined();
   });
 
   it("card_random hits /cards/random with no query by default", async () => {
@@ -214,6 +239,191 @@ describe("mcp-scryfall server", () => {
     const body = bodyOf(res);
     expect(body.data[0].type).toBe("oracle_cards");
     expect(body.data[0].download_uri).toContain("scryfall.io");
+  });
+
+  it("card_collection POSTs normalized identifiers and returns summaries with counts", async () => {
+    const fetchMock = mockFetch({
+      object: "list",
+      not_found: [],
+      data: [
+        {
+          name: "Lightning Bolt",
+          mana_cost: "{R}",
+          type_line: "Instant",
+          cmc: 1,
+          set: "clu",
+          oracle_text: "Lightning Bolt deals 3 damage to any target.",
+          legalities: { modern: "legal" },
+        },
+        {
+          name: "Counterspell",
+          mana_cost: "{U}{U}",
+          type_line: "Instant",
+          cmc: 2,
+          set: "clu",
+          oracle_text: "Counter target spell.",
+          legalities: { modern: "legal" },
+        },
+      ],
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const client = await connect();
+    const res = await client.callTool({
+      name: "card_collection",
+      arguments: {
+        identifiers: [
+          "Lightning Bolt",
+          { id: "9bc7f7c2-1b6c-4954-a05c-24014d72f66e" },
+          { set: "clu", collector_number: "141" },
+        ],
+      },
+    });
+    // one POST to /cards/collection with JSON body; strings normalize to {name}
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toContain("/cards/collection");
+    expect(init.method).toBe("POST");
+    expect(init.headers["Content-Type"]).toBe("application/json");
+    expect(JSON.parse(init.body)).toEqual({
+      identifiers: [
+        { name: "Lightning Bolt" },
+        { id: "9bc7f7c2-1b6c-4954-a05c-24014d72f66e" },
+        { set: "clu", collector_number: "141" },
+      ],
+    });
+    const out = bodyOf(res);
+    expect(out.requested).toBe(3);
+    expect(out.found).toBe(2);
+    expect(out.not_found).toEqual([]);
+    // summaries carry oracle_text but not full-object baggage like legalities
+    expect(out.data[0]).toEqual({
+      name: "Lightning Bolt",
+      mana_cost: "{R}",
+      type_line: "Instant",
+      cmc: 1,
+      set: "clu",
+      oracle_text: "Lightning Bolt deals 3 damage to any target.",
+    });
+    expect(out.data[1].legalities).toBeUndefined();
+  });
+
+  it("card_collection chunks past Scryfall's 75-identifier cap and merges pages", async () => {
+    const page = (cardName: string, missName: string) =>
+      new Response(
+        JSON.stringify({
+          object: "list",
+          not_found: [{ name: missName }],
+          data: [{ name: cardName, type_line: "Instant", cmc: 1, set: "xxx", oracle_text: "Text." }],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    const fetchMock = vi
+      .fn<(url?: any, init?: any) => Promise<Response>>()
+      .mockImplementationOnce(async () => page("Card A", "Bogus One"))
+      .mockImplementationOnce(async () => page("Card B", "Bogus Two"));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = await connect();
+    const identifiers = Array.from({ length: 100 }, (_, i) => `Card ${i + 1}`);
+    const res = await client.callTool({
+      name: "card_collection",
+      arguments: { identifiers },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const firstBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const secondBody = JSON.parse(fetchMock.mock.calls[1][1].body);
+    expect(firstBody.identifiers).toHaveLength(75);
+    expect(secondBody.identifiers).toHaveLength(25);
+    expect(firstBody.identifiers[0]).toEqual({ name: "Card 1" });
+    expect(secondBody.identifiers[0]).toEqual({ name: "Card 76" });
+    const out = bodyOf(res);
+    expect(out.requested).toBe(100);
+    expect(out.found).toBe(2);
+    expect(out.not_found).toEqual([{ name: "Bogus One" }, { name: "Bogus Two" }]);
+    expect(out.data.map((c: any) => c.name)).toEqual(["Card A", "Card B"]);
+  });
+
+  it("card_collection surfaces not_found ahead of the data", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch({
+        object: "list",
+        not_found: [{ name: "Zzzz Nonsense" }],
+        data: [
+          { name: "Lightning Bolt", mana_cost: "{R}", type_line: "Instant", cmc: 1, set: "clu", oracle_text: "Lightning Bolt deals 3 damage to any target." },
+        ],
+      }),
+    );
+    const client = await connect();
+    const res = await client.callTool({
+      name: "card_collection",
+      arguments: { identifiers: ["Lightning Bolt", "Zzzz Nonsense"] },
+    });
+    const out = bodyOf(res);
+    expect(out.requested).toBe(2);
+    expect(out.found).toBe(1);
+    expect(out.not_found).toEqual([{ name: "Zzzz Nonsense" }]);
+    // not_found leads the envelope so a decklist miss can't hide under 74 hits
+    expect(Object.keys(out)).toEqual(["requested", "found", "not_found", "data"]);
+  });
+
+  it("card_collection full:true returns raw card objects", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch({
+        object: "list",
+        not_found: [],
+        data: [
+          {
+            name: "Lightning Bolt",
+            oracle_text: "Lightning Bolt deals 3 damage to any target.",
+            legalities: { modern: "legal" },
+          },
+        ],
+      }),
+    );
+    const client = await connect();
+    const res = await client.callTool({
+      name: "card_collection",
+      arguments: { identifiers: ["Lightning Bolt"], full: true },
+    });
+    const out = bodyOf(res);
+    expect(out.data[0].legalities).toEqual({ modern: "legal" });
+    expect(out.not_found).toEqual([]);
+  });
+
+  it("card_collection propagates a POST error with Scryfall's details", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch(
+        {
+          object: "error",
+          code: "bad_request",
+          status: 400,
+          details: "All of your identifiers were invalid.",
+        },
+        400,
+      ),
+    );
+    const client = await connect();
+    await expect(
+      client.callTool({
+        name: "card_collection",
+        arguments: { identifiers: ["Lightning Bolt"] },
+      }),
+    ).rejects.toThrow(/All of your identifiers were invalid/);
+  });
+
+  it("card_collection rejects bad input before any request", async () => {
+    const fetchMock = mockFetch({ object: "list", not_found: [], data: [] });
+    vi.stubGlobal("fetch", fetchMock);
+    const client = await connect();
+    await expect(
+      client.callTool({ name: "card_collection", arguments: { identifiers: [] } }),
+    ).rejects.toThrow(/non-empty/);
+    await expect(
+      client.callTool({ name: "card_collection", arguments: { identifiers: [42] } }),
+    ).rejects.toThrow(/invalid identifier/);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("throws with Scryfall's detail on a 429 rate-limit error", async () => {
