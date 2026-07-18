@@ -11,7 +11,7 @@ LLMs misremember card names, costs, and rules text. This looks them up on live S
 | `card_named` | Exact-name lookup (optional set code). Full card object. |
 | `card_fuzzy` | Fuzzy-name lookup. Handles typos and partial names. |
 | `card_search` | [Scryfall query-syntax](https://scryfall.com/docs/syntax) search. Returns compact summaries (name, cost, type, `oracle_text`) by default (pass `full: true` for raw objects). |
-| `card_collection` | Batch lookup (`POST /cards/collection`) — resolve a whole decklist in one call. Takes exact-name strings and/or `{name}` / `{id}` / `{set, collector_number}` identifiers; misses come back in `not_found`. |
+| `card_collection` | Batch lookup (`POST /cards/collection`) — resolve a whole decklist in one call. Takes exact-name strings and/or `{name}` / `{id}` / `{name, set}` / `{set, collector_number}` identifiers; misses come back in `not_found`. |
 | `card_random` | A random card, optionally filtered by a query. |
 | `bulk_default` | Lists Scryfall bulk-data endpoints for offline corpus building. |
 
@@ -44,6 +44,8 @@ Add it to your client's MCP config:
 `SCRYFALL_CONTACT` is optional; it is added to the `User-Agent` per Scryfall's API guidelines.
 
 ## Examples
+
+Shapes below are exact; the volatile values (`total_cards`, latest-printing `set` codes) are whatever Scryfall returned when this was written.
 
 `card_search` with `q = "c:rb cmc<=2 t:creature o:haste"` returns compact rows — rules text included — plus paging metadata:
 
@@ -94,6 +96,16 @@ npm run typecheck
 ## API etiquette
 
 Follows [Scryfall's guidelines](https://scryfall.com/docs/api): a 100 ms delay between requests, a descriptive `User-Agent`, and `Accept: application/json`. `card_collection` never posts more than Scryfall's cap of 75 identifiers per request; chunked requests go through the same delay queue.
+
+## Limitations
+
+- No caching, no offline store: every call is a live Scryfall request. `bulk_default` lists the bulk-data endpoints; downloading them is the caller's job.
+- Requests never run in parallel — everything funnels through the one 100 ms-spaced queue, so a large `card_collection` (sequential 75-identifier POSTs) takes proportionally longer. Each request times out after 15 s.
+- Thin passthrough: beyond the compact summaries, results are Scryfall's data as returned — no legality checking, no rules logic.
+
+## AI assistance
+
+This project was built with AI assistance (Claude). Correctness is established by the mocked-transport test suite (`npm test` — every tool, error paths, chunking, throttle serialization; no network), a strict typecheck, live per-tool smoke runs against Scryfall (`npm run smoke`), and daily real use for deckbuilding. I review the code and stand behind it.
 
 ## License
 
