@@ -9,7 +9,7 @@ const SCRYFALL = "https://api.scryfall.com";
 // || not ?? because an empty SCRYFALL_CONTACT would still need the fallback
 const CONTACT =
   process.env.SCRYFALL_CONTACT || "https://github.com/haksanlulz/mcp-scryfall";
-const UA = `mcp-scryfall/1.0 (${CONTACT})`;
+const UA = `mcp-scryfall/1.1 (${CONTACT})`;
 const DELAY_MS = 100;
 
 // serialize through one chain: the SDK dispatches handlers concurrently, so a
@@ -66,22 +66,33 @@ async function scryfallRequest(path: string, body?: unknown): Promise<any> {
   });
 }
 
+// Keys are always present (null when the card has no value) so a caller can
+// tell "this card has no power" from "this field wasn't returned".
 function summarizeCard(card: any) {
   return {
     name: card.name,
     // double-faced cards carry mana_cost per face, not top-level
     mana_cost:
       card.mana_cost ??
-      card.card_faces?.map((f: any) => f.mana_cost).filter(Boolean).join(" // "),
-    type_line: card.type_line,
-    cmc: card.cmc,
-    set: card.set,
+      card.card_faces?.map((f: any) => f.mana_cost).filter(Boolean).join(" // ") ??
+      null,
+    type_line: card.type_line ?? null,
+    cmc: card.cmc ?? null,
+    set: card.set ?? null,
+    collector_number: card.collector_number ?? null,
     // rules text is the point of this server; without it every summary row
     // costs a card_named round-trip. Same per-face fallback as mana_cost,
     // joined with the divider on its own line since faces are multi-line prose.
     oracle_text:
       card.oracle_text ??
-      card.card_faces?.map((f: any) => f.oracle_text).filter(Boolean).join("\n//\n"),
+      card.card_faces?.map((f: any) => f.oracle_text).filter(Boolean).join("\n//\n") ??
+      null,
+    power: card.power ?? null,
+    toughness: card.toughness ?? null,
+    color_identity: card.color_identity ?? null,
+    // the one legality worth carrying inline: deck-list checking is the common
+    // batch use, and the full legalities map is ~20 keys of mostly noise
+    legal_commander: card.legalities?.commander ?? null,
   };
 }
 
@@ -205,6 +216,18 @@ const TOOLS = [
     },
   },
   {
+    name: "card_rulings",
+    description:
+      "Official Wizards/Scryfall rulings for one card — the errata and corner-case answers that are not in the oracle text. Give an exact name (resolved via an exact lookup first) or a Scryfall card id to skip that hop. Returns Scryfall's rulings list {object:'list', data:[{published_at, comment, source}]}; empty data means the card has no rulings, which is itself an answer.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Exact card name" },
+        id: { type: "string", description: "Scryfall card id (skips the name-resolution request)" },
+      },
+    },
+  },
+  {
     name: "bulk_default",
     description:
       "List Scryfall bulk-data endpoints. Returns an array of {type, name, download_uri, size, updated_at}; the caller fetches download_uri directly for the full oracle-text JSON dumps. Useful for offline corpus building.",
@@ -214,7 +237,7 @@ const TOOLS = [
 
 export function createServer(): Server {
   const server = new Server(
-    { name: "mcp-scryfall", version: "1.0.0" },
+    { name: "mcp-scryfall", version: "1.1.0" },
     { capabilities: { tools: {} } },
   );
 
@@ -280,6 +303,19 @@ export function createServer(): Server {
         let path = "/cards/random";
         if (args.q) path += `?q=${encodeURIComponent(String(args.q))}`;
         return asText(await scryfallRequest(path));
+      }
+      case "card_rulings": {
+        let id = args.id ? String(args.id).trim() : "";
+        if (!id) {
+          const name = args.name ? String(args.name).trim() : "";
+          if (!name) throw new Error("card_rulings needs a name or a Scryfall id");
+          // resolve exact -> id; a miss throws out of scryfallRequest with
+          // Scryfall's own details rather than returning empty rulings, which
+          // would read as "this card has no rulings"
+          const card = await scryfallRequest(`/cards/named?exact=${encodeURIComponent(name)}`);
+          id = String(card.id);
+        }
+        return asText(await scryfallRequest(`/cards/${encodeURIComponent(id)}/rulings`));
       }
       case "bulk_default":
         return asText(await scryfallRequest("/bulk-data"));

@@ -10,10 +10,13 @@ LLMs misremember card names, costs, and rules text. This looks them up on live S
 |------|--------------|
 | `card_named` | Exact-name lookup (optional set code). Full card object. |
 | `card_fuzzy` | Fuzzy-name lookup. Handles typos and partial names. |
-| `card_search` | [Scryfall query-syntax](https://scryfall.com/docs/syntax) search. Returns compact summaries (name, cost, type, `oracle_text`) by default (pass `full: true` for raw objects). |
+| `card_search` | [Scryfall query-syntax](https://scryfall.com/docs/syntax) search. Returns compact summaries by default (pass `full: true` for raw objects). |
 | `card_collection` | Batch lookup (`POST /cards/collection`) — resolve a whole decklist in one call. Takes exact-name strings and/or `{name}` / `{id}` / `{name, set}` / `{set, collector_number}` identifiers; misses come back in `not_found`. |
 | `card_random` | A random card, optionally filtered by a query. |
+| `card_rulings` | Official Wizards rulings for one card, by exact name or Scryfall id — the errata and corner-case answers that are not in the oracle text. |
 | `bulk_default` | Lists Scryfall bulk-data endpoints for offline corpus building. |
+
+The compact summary returned by `card_search` and `card_collection` is `name`, `mana_cost`, `type_line`, `cmc`, `set`, `collector_number`, `oracle_text`, `power`, `toughness`, `color_identity`, `legal_commander`. Every key is always present, `null` when the card has no value — so "this creature has no power" is distinguishable from "that field wasn't returned".
 
 ## Install
 
@@ -61,7 +64,12 @@ Shapes below are exact; the volatile values (`total_cards`, latest-printing `set
       "type_line": "Creature — Zombie Warrior",
       "cmc": 2,
       "set": "war",
-      "oracle_text": "Haste\nWhenever this creature deals combat damage to a player or planeswalker, put a +1/+1 counter on this creature.\nWhen this creature dies, it deals damage equal to its power to any target."
+      "collector_number": "189",
+      "oracle_text": "Haste\nWhenever this creature deals combat damage to a player or planeswalker, put a +1/+1 counter on this creature.\nWhen this creature dies, it deals damage equal to its power to any target.",
+      "power": "2",
+      "toughness": "2",
+      "color_identity": ["B", "R"],
+      "legal_commander": "legal"
     }
   ]
 }
@@ -75,8 +83,8 @@ Shapes below are exact; the volatile values (`total_cards`, latest-printing `set
   "found": 2,
   "not_found": [{ "name": "Zzzz Definitely Not A Card" }],
   "data": [
-    { "name": "Lightning Bolt", "mana_cost": "{R}", "type_line": "Instant", "cmc": 1, "set": "msc", "oracle_text": "Lightning Bolt deals 3 damage to any target." },
-    { "name": "Counterspell", "mana_cost": "{U}{U}", "type_line": "Instant", "cmc": 2, "set": "dsc", "oracle_text": "Counter target spell." }
+    { "name": "Lightning Bolt", "mana_cost": "{R}", "type_line": "Instant", "cmc": 1, "set": "msc", "collector_number": "128", "oracle_text": "Lightning Bolt deals 3 damage to any target.", "power": null, "toughness": null, "color_identity": ["R"], "legal_commander": "legal" },
+    { "name": "Counterspell", "mana_cost": "{U}{U}", "type_line": "Instant", "cmc": 2, "set": "dsc", "collector_number": "58", "oracle_text": "Counter target spell.", "power": null, "toughness": null, "color_identity": ["U"], "legal_commander": "legal" }
   ]
 }
 ```
@@ -89,7 +97,7 @@ Pass `full: true` to either tool to get the raw Scryfall objects instead.
 
 ```bash
 npm test         # MCP-layer tests over an in-memory transport (fetch mocked, no network)
-npm run smoke    # hit the live Scryfall API once per tool
+npm run smoke    # spawn the real server over stdio and hit live Scryfall once per tool
 npm run typecheck
 ```
 
@@ -105,7 +113,7 @@ Follows [Scryfall's guidelines](https://scryfall.com/docs/api): a 100 ms delay b
 
 ## AI assistance
 
-This project was built with AI assistance (Claude). Correctness is established by the mocked-transport test suite (`npm test` — every tool, error paths, chunking, throttle serialization; no network), a strict typecheck, live per-tool smoke runs against Scryfall (`npm run smoke`), and daily real use for deckbuilding. I review the code and stand behind it.
+This project was built with AI assistance (Claude). Correctness is established by the mocked-transport test suite (`npm test` — every tool, error paths, chunking, throttle serialization; no network), a strict typecheck, a smoke run that spawns the real server over stdio and calls live Scryfall once per tool (`npm run smoke`), and daily real use for deckbuilding. I review the code and stand behind it.
 
 ## License
 

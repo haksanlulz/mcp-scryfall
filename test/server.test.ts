@@ -28,7 +28,7 @@ function bodyOf(res: any) {
 describe("mcp-scryfall server", () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it("exposes all six tools", async () => {
+  it("exposes all seven tools", async () => {
     const client = await connect();
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
@@ -37,6 +37,7 @@ describe("mcp-scryfall server", () => {
       "card_fuzzy",
       "card_named",
       "card_random",
+      "card_rulings",
       "card_search",
     ]);
   });
@@ -126,7 +127,12 @@ describe("mcp-scryfall server", () => {
       type_line: "Creature — Goblin Berserker",
       cmc: 2,
       set: "rtr",
+      collector_number: null,
       oracle_text: "First strike, haste",
+      power: null,
+      toughness: null,
+      color_identity: null,
+      legal_commander: null,
     });
     expect(out.data[1].oracle_text).toBe("Haste");
   });
@@ -181,7 +187,7 @@ describe("mcp-scryfall server", () => {
     expect(card.oracle_text).toBe("Front face text.\n//\nBack face text.");
   });
 
-  it("card_search summaries omit oracle_text only when the card truly has none", async () => {
+  it("card_search summaries null out fields the card truly lacks, rather than dropping them", async () => {
     vi.stubGlobal(
       "fetch",
       mockFetch({
@@ -196,7 +202,11 @@ describe("mcp-scryfall server", () => {
       name: "card_search",
       arguments: { q: "oddity" },
     });
-    expect(bodyOf(res).data[0].oracle_text).toBeUndefined();
+    const card = bodyOf(res).data[0];
+    // present-but-null, so a caller can tell "no power" from "field not returned"
+    expect(card).toHaveProperty("oracle_text", null);
+    expect(card).toHaveProperty("power", null);
+    expect(card).toHaveProperty("legal_commander", null);
   });
 
   it("card_random hits /cards/random with no query by default", async () => {
@@ -295,14 +305,20 @@ describe("mcp-scryfall server", () => {
     expect(out.requested).toBe(3);
     expect(out.found).toBe(2);
     expect(out.not_found).toEqual([]);
-    // summaries carry oracle_text but not full-object baggage like legalities
+    // summaries carry the grounding fields but not full-object baggage like
+    // the whole legalities map — commander legality is lifted out on its own
     expect(out.data[0]).toEqual({
       name: "Lightning Bolt",
       mana_cost: "{R}",
       type_line: "Instant",
       cmc: 1,
       set: "clu",
+      collector_number: null,
       oracle_text: "Lightning Bolt deals 3 damage to any target.",
+      power: null,
+      toughness: null,
+      color_identity: null,
+      legal_commander: null,
     });
     expect(out.data[1].legalities).toBeUndefined();
   });
@@ -465,6 +481,69 @@ describe("mcp-scryfall server", () => {
     await expect(
       client.callTool({ name: "card_random", arguments: {} }),
     ).rejects.toThrow(/non-JSON \(status 502\)/);
+  });
+
+  it("card_rulings resolves a name to an id, then fetches that card's rulings", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ object: "card", id: "abc-123", name: "Black Lotus" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            object: "list",
+            data: [{ published_at: "2004-10-04", comment: "A ruling.", source: "wotc" }],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const client = await connect();
+    const res = await client.callTool({
+      name: "card_rulings",
+      arguments: { name: "Black Lotus" },
+    });
+    expect(String(fetchMock.mock.calls[0][0])).toContain("/cards/named?exact=Black%20Lotus");
+    expect(String(fetchMock.mock.calls[1][0])).toContain("/cards/abc-123/rulings");
+    expect(bodyOf(res).data[0].comment).toBe("A ruling.");
+  });
+
+  it("card_rulings with an id skips the name-resolution request", async () => {
+    const fetchMock = mockFetch({ object: "list", data: [] });
+    vi.stubGlobal("fetch", fetchMock);
+    const client = await connect();
+    const res = await client.callTool({
+      name: "card_rulings",
+      arguments: { id: "abc-123" },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0][0])).toContain("/cards/abc-123/rulings");
+    // empty data is a real answer (no rulings), not an error
+    expect(bodyOf(res).data).toEqual([]);
+  });
+
+  it("card_rulings rejects when given neither a name nor an id", async () => {
+    vi.stubGlobal("fetch", mockFetch({ object: "list", data: [] }));
+    const client = await connect();
+    await expect(
+      client.callTool({ name: "card_rulings", arguments: {} }),
+    ).rejects.toThrow(/needs a name or a Scryfall id/);
+  });
+
+  it("card_rulings surfaces an unknown name as an error, not as empty rulings", async () => {
+    // Otherwise a typo'd card reads as "this card has no rulings".
+    vi.stubGlobal(
+      "fetch",
+      mockFetch({ object: "error", status: 404, details: "No card found." }, 404),
+    );
+    const client = await connect();
+    await expect(
+      client.callTool({ name: "card_rulings", arguments: { name: "Nonexistent Card" } }),
+    ).rejects.toThrow(/No card found/);
   });
 
   it("a hung request is bounded by the abort signal and does not deadlock later calls", async () => {
