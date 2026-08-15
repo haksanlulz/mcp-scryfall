@@ -236,9 +236,9 @@ describe("mcp-scryfall server", () => {
         {
           type: "oracle_cards",
           name: "Oracle Cards",
-          download_uri: "https://data.scryfall.io/oracle-cards/oracle.json",
-          size: 145000000,
-          updated_at: "2026-07-11T00:00:00.000Z",
+          jsonl_download_uri: "https://data.scryfall.io/oracle-cards/oracle.jsonl.gz",
+          compressed_size: 24529261,
+          updated_at: "2026-08-15T09:01:55.591Z",
         },
       ],
     });
@@ -248,7 +248,7 @@ describe("mcp-scryfall server", () => {
     expect(String(fetchMock.mock.calls[0][0])).toContain("/bulk-data");
     const body = bodyOf(res);
     expect(body.data[0].type).toBe("oracle_cards");
-    expect(body.data[0].download_uri).toContain("scryfall.io");
+    expect(body.data[0].jsonl_download_uri).toContain("scryfall.io");
   });
 
   it("card_collection POSTs normalized identifiers and returns summaries with counts", async () => {

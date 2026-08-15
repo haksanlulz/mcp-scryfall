@@ -230,7 +230,7 @@ const TOOLS = [
   {
     name: "bulk_default",
     description:
-      "List Scryfall bulk-data endpoints. Returns an array of {type, name, download_uri, size, updated_at}; the caller fetches download_uri directly for the full oracle-text JSON dumps. Useful for offline corpus building.",
+      "List Scryfall bulk-data endpoints. Returns an array of items carrying type, name, updated_at, compressed_size and jsonl_download_uri; the caller fetches jsonl_download_uri directly. Payloads are gzipped JSONL — one card object per line, not a single JSON array. Useful for offline corpus building.",
     inputSchema: { type: "object", properties: {} },
   },
 ];

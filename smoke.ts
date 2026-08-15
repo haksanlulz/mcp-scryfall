@@ -164,10 +164,14 @@ try {
       "color_identity" in c && "legal_commander" in c),
     JSON.stringify(Object.keys(batch?.data?.[0] ?? {})));
 
+  // Dryad Arbor, not Black Lotus: Black Lotus has zero rulings, so a shape-only
+  // assertion over it passed whether the rulings path worked or always returned
+  // empty. Assert a non-empty list with real comment text so this can fail.
   const rulings = payload(await session.rpc("tools/call",
-    { name: "card_rulings", arguments: { name: "Black Lotus" } }));
-  check("stdio: card_rulings returns the rulings list shape",
-    rulings?.object === "list" && Array.isArray(rulings?.data),
+    { name: "card_rulings", arguments: { name: "Dryad Arbor" } }));
+  check("stdio: card_rulings returns a non-empty rulings list",
+    rulings?.object === "list" && Array.isArray(rulings?.data) &&
+    rulings.data.length > 0 && typeof rulings.data[0]?.comment === "string",
     `object=${rulings?.object} entries=${rulings?.data?.length}`);
 
   const random = payload(await session.rpc("tools/call", { name: "card_random", arguments: {} }));
@@ -175,8 +179,24 @@ try {
     typeof random?.name === "string" && random.name.length > 0);
 
   const bulk = payload(await session.rpc("tools/call", { name: "bulk_default", arguments: {} }));
+  const bulkItem = bulk?.data?.[0] ?? {};
   check("stdio: bulk_default lists download endpoints",
-    Array.isArray(bulk?.data) && bulk.data.length > 0 && typeof bulk.data[0].download_uri === "string");
+    Array.isArray(bulk?.data) && bulk.data.length > 0 &&
+    typeof bulkItem.jsonl_download_uri === "string");
+
+  // The description is what a model reads to decide how to use the tool, so an
+  // upstream rename makes it actively misleading rather than merely stale — and
+  // the mocked unit test cannot catch one, since it asserts its own fixture.
+  // Scryfall moved to jsonl_download_uri/compressed_size (from download_uri/
+  // size) by 2026-08-15. Every snake_case field the description names must
+  // exist on a real payload item.
+  const bulkDesc: string =
+    (list?.tools ?? []).find((t: any) => t.name === "bulk_default")?.description ?? "";
+  const namedFields = [...new Set(bulkDesc.match(/\b[a-z]+(?:_[a-z]+)+\b/g) ?? [])];
+  const missingFields = namedFields.filter((f) => !(f in bulkItem));
+  check("stdio: every field bulk_default's description names exists on the payload",
+    namedFields.length > 0 && missingFields.length === 0,
+    `named=[${namedFields.join(", ")}] missing=[${missingFields.join(", ")}]`);
 } catch (e) {
   check(`stdio harness error: ${(e as Error).message}`, false, session.stderr.slice(-400));
 } finally {
