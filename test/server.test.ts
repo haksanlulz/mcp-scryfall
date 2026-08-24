@@ -1,7 +1,7 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { createServer } from "../server.js";
+import { createServer, clearScryfallCache } from "../server.js";
 
 async function connect(): Promise<Client> {
   const server = createServer();
@@ -20,6 +20,10 @@ function mockFetch(payload: unknown, status = 200) {
     }),
   );
 }
+
+// The response cache lives for the process, so a value cached by one test would be
+// served to the next and make the suite order-dependent. Reset before every test.
+beforeEach(() => clearScryfallCache());
 
 function bodyOf(res: any) {
   return JSON.parse(res.content[0].text);
@@ -597,5 +601,41 @@ describe("mcp-scryfall server", () => {
       client.callTool({ name: "card_random", arguments: {} }),
     ]);
     expect(maxConcurrent).toBe(1);
+  });
+});
+
+describe("response cache", () => {
+  // Scryfall asks clients to cache. These pin the three properties that make a
+  // cache safe rather than merely fast: it must hit, it must not swallow the one
+  // endpoint whose whole value is being different each time, and it must never
+  // serve an error back as though it were data.
+
+  it("serves a repeated lookup without a second request", async () => {
+    const fetchMock = mockFetch({ object: "card", name: "Black Lotus" });
+    vi.stubGlobal("fetch", fetchMock);
+    const client = await connect();
+    const a = await client.callTool({ name: "card_named", arguments: { name: "Black Lotus" } });
+    const b = await client.callTool({ name: "card_named", arguments: { name: "Black Lotus" } });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(bodyOf(b as any)).toEqual(bodyOf(a as any));
+  });
+
+  it("never caches card_random", async () => {
+    const fetchMock = mockFetch({ object: "card", name: "Whatever" });
+    vi.stubGlobal("fetch", fetchMock);
+    const client = await connect();
+    await client.callTool({ name: "card_random", arguments: {} });
+    await client.callTool({ name: "card_random", arguments: {} });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not cache an error response", async () => {
+    const fail = mockFetch({ object: "error", status: 404, details: "no card" }, 404);
+    vi.stubGlobal("fetch", fail);
+    const client = await connect();
+    await expect(client.callTool({ name: "card_named", arguments: { name: "Nope" } })).rejects.toThrow();
+    await expect(client.callTool({ name: "card_named", arguments: { name: "Nope" } })).rejects.toThrow();
+    // a cached 404 would leave this at 1 and pin the failure for the whole process
+    expect(fail).toHaveBeenCalledTimes(2);
   });
 });

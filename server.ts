@@ -32,9 +32,59 @@ function rateLimited<T>(fn: () => Promise<T>): Promise<T> {
   return run;
 }
 
+// Scryfall's API guidelines ask clients to cache; card data is effectively static
+// between set releases, so a repeat lookup should not cost a request. Cached in
+// memory only: an MCP server is a short-lived child process, and a disk cache would
+// need invalidation logic to buy anything a process lifetime does not already give.
+//
+// GET only. POST is card_collection, whose body is the cache key's real content, and
+// /cards/random must never be served from cache or it stops being random.
+const CACHE_TTL_MS = Number(process.env.SCRYFALL_CACHE_TTL_MS ?? 24 * 60 * 60 * 1000);
+const CACHE_MAX = Number(process.env.SCRYFALL_CACHE_MAX ?? 500);
+const cache = new Map<string, { at: number; value: any }>();
+
+function cacheable(path: string, body?: unknown): boolean {
+  return body === undefined && !path.startsWith("/cards/random") && CACHE_TTL_MS > 0;
+}
+
+function cacheGet(path: string): any | undefined {
+  const hit = cache.get(path);
+  if (!hit) return undefined;
+  if (Date.now() - hit.at > CACHE_TTL_MS) {
+    cache.delete(path);
+    return undefined;
+  }
+  // refresh recency: re-inserting moves the key to the end of Map iteration order,
+  // which is what makes the eviction below least-recently-used rather than oldest-written
+  cache.delete(path);
+  cache.set(path, hit);
+  return hit.value;
+}
+
+function cacheSet(path: string, value: any): void {
+  cache.set(path, { at: Date.now(), value });
+  while (cache.size > CACHE_MAX) {
+    const oldest = cache.keys().next();
+    if (oldest.done) break;
+    cache.delete(oldest.value);
+  }
+}
+
+// exported for tests: a cache that cannot be cleared makes every later test depend
+// on the order of the ones before it
+export function clearScryfallCache(): void {
+  cache.clear();
+}
+
 // single owner of the fetch shape (UA, Accept, timeout, JSON + error handling);
 // GET by default, POST with a JSON body when one is given
 async function scryfallRequest(path: string, body?: unknown): Promise<any> {
+  if (cacheable(path, body)) {
+    const hit = cacheGet(path);
+    // a cache hit skips the rate limiter too: nothing leaves the process, so
+    // there is no Scryfall request to pace
+    if (hit !== undefined) return hit;
+  }
   return rateLimited(async () => {
     const res = await fetch(`${SCRYFALL}${path}`, {
       method: body === undefined ? "GET" : "POST",
@@ -59,9 +109,11 @@ async function scryfallRequest(path: string, body?: unknown): Promise<any> {
     }
     if (!res.ok) {
       // Scryfall error bodies are {object:"error", code, status, details}; surface details
+      // NOTE: thrown before any cacheSet, so an error is never cached
       const detail = json?.details ?? raw.slice(0, 200);
       throw new Error(`Scryfall ${path} error (status ${res.status}): ${detail}`);
     }
+    if (cacheable(path, body)) cacheSet(path, json);
     return json;
   });
 }
