@@ -639,3 +639,42 @@ describe("response cache", () => {
     expect(fail).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("transient-failure retry", () => {
+  // Scryfall asks clients to back off on 429. These pin what must and must not
+  // be retried: repeating a 404 spends the rate limit to re-learn an answer we
+  // already have.
+  it("retries a 429 and succeeds on the next attempt", async () => {
+    let n = 0;
+    const flaky = vi.fn(async () => {
+      n++;
+      return n === 1
+        ? new Response(JSON.stringify({ object: "error", status: 429, details: "slow down" }),
+            { status: 429, headers: { "content-type": "application/json", "retry-after": "0" } })
+        : new Response(JSON.stringify({ object: "card", name: "Lightning Bolt" }),
+            { status: 200, headers: { "content-type": "application/json" } });
+    });
+    vi.stubGlobal("fetch", flaky);
+    const client = await connect();
+    const res = await client.callTool({ name: "card_named", arguments: { name: "Lightning Bolt" } });
+    expect(flaky).toHaveBeenCalledTimes(2);
+    expect(bodyOf(res as any).name).toBe("Lightning Bolt");
+  });
+
+  it("does NOT retry a 404", async () => {
+    const miss = mockFetch({ object: "error", status: 404, details: "no card" }, 404);
+    vi.stubGlobal("fetch", miss);
+    const client = await connect();
+    await expect(client.callTool({ name: "card_named", arguments: { name: "Nope" } })).rejects.toThrow();
+    expect(miss).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives up after the attempt cap and surfaces Scryfall's own message", async () => {
+    const down = mockFetch({ object: "error", status: 503, details: "upstream unavailable" }, 503);
+    vi.stubGlobal("fetch", down);
+    const client = await connect();
+    await expect(client.callTool({ name: "card_named", arguments: { name: "X" } }))
+      .rejects.toThrow(/upstream unavailable/);
+    expect(down).toHaveBeenCalledTimes(3);
+  });
+});

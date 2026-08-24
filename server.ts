@@ -86,18 +86,78 @@ async function scryfallRequest(path: string, body?: unknown): Promise<any> {
     if (hit !== undefined) return hit;
   }
   return rateLimited(async () => {
-    const res = await fetch(`${SCRYFALL}${path}`, {
-      method: body === undefined ? "GET" : "POST",
-      headers: {
-        "User-Agent": UA,
-        Accept: "application/json",
-        ...(body === undefined ? {} : { "Content-Type": "application/json" }),
-      },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      // bound every request: without this a single hung fetch wedges the whole
-      // serialized queue and blocks every later tool call for the process lifetime
-      signal: AbortSignal.timeout(15_000),
-    });
+    return attemptWithRetry(path, body);
+  });
+}
+
+// Scryfall asks clients to back off on 429. A single one used to fail the whole
+// tool call, as did any transient 5xx or dropped connection -- the 100ms pacer
+// makes those rare, not impossible, since it only paces THIS process and the
+// rate limit is per IP.
+//
+// Retried: 429, 5xx, and network/timeout errors. NOT retried: 404 and other 4xx,
+// because "no such card" and "bad query" are real answers and repeating them just
+// spends the rate limit twice. Runs inside the serialized queue on purpose -- if
+// Scryfall is asking us to slow down, every later call should wait too.
+const MAX_ATTEMPTS = Number(process.env.SCRYFALL_MAX_ATTEMPTS ?? 3);
+const BACKOFF_MS = [250, 1000];
+
+function retryAfterMs(res: Response): number | null {
+  const raw = res.headers.get("retry-after");
+  if (!raw) return null;
+  const secs = Number(raw);
+  // Retry-After is seconds or an HTTP date; only the numeric form is worth honouring
+  return Number.isFinite(secs) && secs >= 0 ? Math.min(secs * 1000, 10_000) : null;
+}
+
+async function attemptWithRetry(path: string, body?: unknown): Promise<any> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    if (attempt > 0) {
+      const wait = BACKOFF_MS[Math.min(attempt - 1, BACKOFF_MS.length - 1)];
+      await new Promise((r) => setTimeout(r, pendingRetryAfter ?? wait));
+      pendingRetryAfter = null;
+    }
+    try {
+      return await attemptOnce(path, body);
+    } catch (err) {
+      lastError = err;
+      if (!(err instanceof RetryableError)) throw err;
+    }
+  }
+  throw lastError instanceof RetryableError ? lastError.cause : lastError;
+}
+
+// Carries the underlying error so the caller sees Scryfall's own message, not a
+// wrapper that hides which request actually failed.
+class RetryableError extends Error {
+  constructor(readonly cause: Error) {
+    super(cause.message);
+  }
+}
+let pendingRetryAfter: number | null = null;
+
+async function attemptOnce(path: string, body?: unknown): Promise<any> {
+  {
+    let res: Response;
+    try {
+      res = await fetch(`${SCRYFALL}${path}`, {
+        method: body === undefined ? "GET" : "POST",
+        headers: {
+          "User-Agent": UA,
+          Accept: "application/json",
+          ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+        },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        // bound every request: without this a single hung fetch wedges the whole
+        // serialized queue and blocks every later tool call for the process lifetime
+        signal: AbortSignal.timeout(15_000),
+      });
+    } catch (err) {
+      // A dropped connection or the 15s timeout: transient by nature, so worth one
+      // more try rather than surfacing as a hard failure to the model.
+      throw new RetryableError(err instanceof Error ? err : new Error(String(err)));
+    }
     const raw = await res.text();
     let json: any;
     try {
@@ -111,11 +171,16 @@ async function scryfallRequest(path: string, body?: unknown): Promise<any> {
       // Scryfall error bodies are {object:"error", code, status, details}; surface details
       // NOTE: thrown before any cacheSet, so an error is never cached
       const detail = json?.details ?? raw.slice(0, 200);
-      throw new Error(`Scryfall ${path} error (status ${res.status}): ${detail}`);
+      const err = new Error(`Scryfall ${path} error (status ${res.status}): ${detail}`);
+      if (res.status === 429 || res.status >= 500) {
+        pendingRetryAfter = retryAfterMs(res);
+        throw new RetryableError(err);
+      }
+      throw err;
     }
     if (cacheable(path, body)) cacheSet(path, json);
     return json;
-  });
+  }
 }
 
 // Keys are always present (null when the card has no value) so a caller can
