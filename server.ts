@@ -135,6 +135,10 @@ class RetryableError extends Error {
     super(cause.message);
   }
 }
+
+// A non-JSON body is not transient: it is a rejected request or a changed API,
+// and it answers the same however many times it is asked. Left un-retried on
+// purpose -- the same reasoning as 404.
 let pendingRetryAfter: number | null = null;
 
 async function attemptOnce(path: string, body?: unknown): Promise<any> {
