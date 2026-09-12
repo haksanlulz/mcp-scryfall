@@ -93,13 +93,23 @@ Scryfall caps one collection POST at 75 identifiers; longer lists are split into
 
 Pass `full: true` to either tool to get the raw Scryfall objects instead.
 
-## Develop
+## Testing
 
 ```bash
-npm test         # MCP-layer tests over an in-memory transport (fetch mocked, no network)
-npm run smoke    # spawn the real server over stdio and hit live Scryfall once per tool
+npm test         # offline: vitest over an in-memory MCP transport, fetch mocked, no network
+npm run smoke    # live: spawns the real server over stdio and calls Scryfall once per tool
 npm run typecheck
 ```
+
+Two tiers, split by script rather than by marker. `npm test` is the gate; `npm run smoke` is a manual check against the live API.
+
+Counts as of 2026-09-11: 455 lines of server source (`wc -l index.ts server.ts`; `smoke.ts` is 242 more and is the live tier, not app code), 744 lines of tests (`wc -l test/*.ts`), 34 tests across 2 files (`grep -c "^\s*it(" test/*.ts`).
+
+What they cover: `test/server.test.ts` drives every tool through a real MCP client over the in-memory transport and asserts on the URLs and POST bodies sent to the mocked `fetch` and on the JSON returned, including error surfacing (404, 429, non-JSON), the 75-identifier chunking in `card_collection`, the abort timeout, rate-limit serialization, the response cache (hit, never for `card_random`, never for errors) and the 429/5xx retry with its attempt cap. `test/no-http-stack.test.ts` pins that this repo's own source imports only the stdio transport and never an HTTP one (the SDK still pulls hono and express into the tree; that test does not and cannot prove they never load). Nothing here touches the network.
+
+Mutation probe, 2026-09-11: changing `COLLECTION_MAX` in `server.ts` from 75 to 74 fails exactly one test, `card_collection chunks past Scryfall's 75-identifier cap and merges pages` (expected a length of 75 but got 74); the other 33 pass. Source restored after the run.
+
+Call-count assertions (`toHaveBeenCalledTimes`, `not.toHaveBeenCalled`) appear at 10 sites; each one pins a contract (one POST per 75-chunk, no request on rejected input, cache hit vs miss, retry attempts). Nine sit next to an assertion on the payload or result; the tenth (`card_random` is never cached) has the call count as its only assertion, because two fetches is the not-cached contract. Policy: assert behavior and payloads, not that a function was called.
 
 ## API etiquette
 
@@ -107,7 +117,7 @@ Follows [Scryfall's guidelines](https://scryfall.com/docs/api): a 100 ms delay b
 
 ## Limitations
 
-- No caching, no offline store: every call is a live Scryfall request. `bulk_default` lists the bulk-data endpoints; downloading them is the caller's job.
+- In-memory GET cache only (24 h TTL by default, 500-entry LRU cap, `card_random` excluded); nothing persists across restarts and there is no offline store. `bulk_default` lists the bulk-data endpoints; downloading them is the caller's job.
 - Requests never run in parallel — everything funnels through the one 100 ms-spaced queue, so a large `card_collection` (sequential 75-identifier POSTs) takes proportionally longer. Each request times out after 15 s.
 - Thin passthrough: beyond the compact summaries, results are Scryfall's data as returned — no legality checking, no rules logic.
 
