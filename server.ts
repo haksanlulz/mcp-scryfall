@@ -274,6 +274,25 @@ function requiredString(tool: string, field: string, raw: unknown): string {
   return value;
 }
 
+// The envelope's `page` is a claim about where the rows beside it came from, and
+// a caller pages by reading has_more and page together. It used to be derived
+// twice from the same argument by two different rules -- truthy-tested for the
+// URL, Number()d for the echo -- so the two could disagree: page:0 is falsy, so
+// nothing was sent and Scryfall served page 1 while the envelope said 0; page:"abc"
+// sent &page=NaN (ignored upstream, page 1 served) while Number("abc") rendered as
+// null. Resolved once here, and a value that cannot name a page is a miss, which
+// this server surfaces as an error rather than a quietly different answer.
+function resolvePage(raw: unknown): number {
+  if (raw === undefined || raw === null) return 1;
+  const n = typeof raw === "number" ? raw : Number(String(raw).trim());
+  if (!Number.isInteger(n) || n < 1) {
+    throw new Error(
+      `card_search: page must be an integer >= 1 — got ${JSON.stringify(raw)}`,
+    );
+  }
+  return n;
+}
+
 // strings are a {name} shorthand; objects pass through as Scryfall identifiers
 // ({name}, {id}, {name, set}, {set, collector_number}, ...) for Scryfall to validate
 function toIdentifier(raw: unknown): Record<string, unknown> {
@@ -329,7 +348,10 @@ const TOOLS = [
       type: "object",
       properties: {
         q: { type: "string", description: "Scryfall query string" },
-        page: { type: "number", description: "Page number (1-indexed, default 1)" },
+        page: {
+          type: "number",
+          description: "Page number: an integer >= 1 (default 1). Any other value is an error.",
+        },
         order: {
           type: "string",
           description: "Sort order: name, cmc, color, released, etc. (default: name)",
@@ -433,17 +455,18 @@ export function createServer(): Server {
       }
       case "card_search": {
         const q = encodeURIComponent(requiredString("card_search", "q", args.q));
-        const page = args.page ? `&page=${Number(args.page)}` : "";
+        const page = resolvePage(args.page);
         const order = args.order
           ? `&order=${encodeURIComponent(String(args.order))}`
           : "";
-        const data: any = await scryfallRequest(`/cards/search?q=${q}${page}${order}`);
+        const data: any = await scryfallRequest(`/cards/search?q=${q}&page=${page}${order}`);
         // summaries by default: full objects on a broad search burn tokens; full:true for raw
         if (args.full || data?.object === "error") return asText(data);
         return asText({
           total_cards: data?.total_cards,
           has_more: data?.has_more,
-          page: Number(args.page ?? 1),
+          // the same resolved value the URL carried, never a second derivation
+          page,
           data: Array.isArray(data?.data) ? data.data.map(summarizeCard) : [],
         });
       }

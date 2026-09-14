@@ -213,6 +213,54 @@ describe("mcp-scryfall server", () => {
     expect(card).toHaveProperty("legal_commander", null);
   });
 
+  // The echoed page is a claim about the provenance of the rows beside it, so
+  // these assert the outgoing URL and the envelope together -- either one alone
+  // passed while the two disagreed.
+  it("card_search sends and echoes the same page when none is given", async () => {
+    const fetchMock = mockFetch({ object: "list", total_cards: 1, has_more: false, data: [] });
+    vi.stubGlobal("fetch", fetchMock);
+    const client = await connect();
+    const res = await client.callTool({ name: "card_search", arguments: { q: "t:goblin" } });
+    expect(String(fetchMock.mock.calls[0][0])).toContain("&page=1");
+    expect(bodyOf(res).page).toBe(1);
+  });
+
+  it("card_search sends and echoes the same page when one is given", async () => {
+    const fetchMock = mockFetch({ object: "list", total_cards: 500, has_more: true, data: [] });
+    vi.stubGlobal("fetch", fetchMock);
+    const client = await connect();
+    const res = await client.callTool({
+      name: "card_search",
+      arguments: { q: "t:goblin", page: 3 },
+    });
+    expect(String(fetchMock.mock.calls[0][0])).toContain("&page=3");
+    expect(bodyOf(res).page).toBe(3);
+  });
+
+  it("card_search rejects page 0 instead of echoing a page it did not request", async () => {
+    // 0 was falsy, so no page parameter was sent and Scryfall served page 1 --
+    // under an envelope claiming page 0.
+    const fetchMock = mockFetch({ object: "list", total_cards: 1, has_more: false, data: [] });
+    vi.stubGlobal("fetch", fetchMock);
+    const client = await connect();
+    await expect(
+      client.callTool({ name: "card_search", arguments: { q: "t:goblin", page: 0 } }),
+    ).rejects.toThrow(/page must be an integer >= 1/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("card_search rejects a non-numeric page instead of sending &page=NaN", async () => {
+    // "abc" sent &page=NaN (Scryfall ignores it and serves page 1) while the echo
+    // rendered Number("abc") as null.
+    const fetchMock = mockFetch({ object: "list", total_cards: 1, has_more: false, data: [] });
+    vi.stubGlobal("fetch", fetchMock);
+    const client = await connect();
+    await expect(
+      client.callTool({ name: "card_search", arguments: { q: "t:goblin", page: "abc" } }),
+    ).rejects.toThrow(/page must be an integer >= 1/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("card_random hits /cards/random with no query by default", async () => {
     const fetchMock = mockFetch({ object: "card", name: "Forest" });
     vi.stubGlobal("fetch", fetchMock);
