@@ -148,7 +148,7 @@ describe("mcp-scryfall server", () => {
         object: "list",
         total_cards: 1,
         has_more: false,
-        data: [{ name: "Ash Zealot", oracle_text: "First strike, haste" }],
+        data: [{ name: "Ash Zealot", oracle_text: "First strike, haste", rarity: "rare" }],
       }),
     );
     const client = await connect();
@@ -156,7 +156,49 @@ describe("mcp-scryfall server", () => {
       name: "card_search",
       arguments: { q: "t:goblin", full: true },
     });
-    expect(bodyOf(res).data[0].oracle_text).toBe("First strike, haste");
+    const body = bodyOf(res);
+    expect(body.data[0].oracle_text).toBe("First strike, haste");
+    // oracle_text alone did not tell the two apart -- summaries carry it too. The
+    // raw response keeps Scryfall's own `object` key and the fields summarizeCard
+    // drops, and the summary envelope has neither.
+    expect(body.object).toBe("list");
+    expect(body.data[0].rarity).toBe("rare");
+  });
+
+  // `full` is declared boolean, but inputSchema is advisory to this SDK's low-level
+  // Server, so a client that serializes booleans as text sends "false" -- truthy --
+  // and used to get the whole raw response back on a broad search.
+  it('card_search reads full:"false" as false, not as a truthy string', async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch({
+        object: "list",
+        total_cards: 1,
+        has_more: false,
+        data: [{ name: "Ash Zealot", oracle_text: "First strike, haste", rarity: "rare" }],
+      }),
+    );
+    const client = await connect();
+    const res = await client.callTool({
+      name: "card_search",
+      arguments: { q: "t:goblin", full: "false" },
+    });
+    const body = bodyOf(res);
+    // the envelope, not Scryfall's own response: `page` is this server's field, and
+    // `rarity` is a raw-card field summarizeCard drops
+    expect(body.page).toBe(1);
+    expect(body.data[0].name).toBe("Ash Zealot");
+    expect(body.data[0].rarity).toBeUndefined();
+  });
+
+  it("card_search rejects a non-boolean full before any request", async () => {
+    const fetchMock = mockFetch({ object: "list", total_cards: 0, data: [] });
+    vi.stubGlobal("fetch", fetchMock);
+    const client = await connect();
+    await expect(
+      client.callTool({ name: "card_search", arguments: { q: "t:goblin", full: "yes" } }),
+    ).rejects.toThrow(/card_search requires full to be a boolean/);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("card_search pulls mana_cost and oracle_text from card_faces for double-faced cards", async () => {
@@ -481,6 +523,30 @@ describe("mcp-scryfall server", () => {
     const out = bodyOf(res);
     expect(out.data[0].legalities).toEqual({ modern: "legal" });
     expect(out.not_found).toEqual([]);
+  });
+
+  it('card_collection reads full:"true" as true, not as a string', async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch({
+        object: "list",
+        not_found: [],
+        data: [
+          {
+            name: "Lightning Bolt",
+            oracle_text: "Lightning Bolt deals 3 damage to any target.",
+            legalities: { modern: "legal" },
+          },
+        ],
+      }),
+    );
+    const client = await connect();
+    const res = await client.callTool({
+      name: "card_collection",
+      arguments: { identifiers: ["Lightning Bolt"], full: "true" },
+    });
+    // legalities is a raw-object field; summarizeCard reduces it to legal_commander
+    expect(bodyOf(res).data[0].legalities).toEqual({ modern: "legal" });
   });
 
   it("card_collection propagates a POST error with Scryfall's details", async () => {

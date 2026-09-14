@@ -307,6 +307,24 @@ function optionalString(tool: string, field: string, raw: unknown): string | und
   return value === "" ? undefined : value;
 }
 
+// `full` was the last argument still read by bare truthiness, and it failed in the
+// expensive direction: it is declared boolean, but `required`/`type` in inputSchema
+// are advisory to the client, so a client that serializes booleans as text sent the
+// STRING "false" -- truthy -- and got the raw Scryfall response back. On a broad
+// card_search that is the opposite of what the caller asked for and the
+// token-expensive opposite; on card_collection it is full card objects for a whole
+// decklist. Resolved before the request is issued, so a value that is neither
+// costs nothing upstream.
+function optionalBoolean(tool: string, field: string, raw: unknown): boolean {
+  if (raw === undefined || raw === null) return false;
+  if (typeof raw === "boolean") return raw;
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  throw new Error(
+    `${tool} requires ${field} to be a boolean when given — got ${JSON.stringify(raw)}`,
+  );
+}
+
 // The envelope's `page` is a claim about where the rows beside it came from, and
 // a caller pages by reading has_more and page together. It used to be derived
 // twice from the same argument by two different rules -- truthy-tested for the
@@ -492,12 +510,13 @@ export function createServer(): Server {
         const page = resolvePage(args.page);
         const orderArg = optionalString("card_search", "order", args.order);
         const order = orderArg ? `&order=${encodeURIComponent(orderArg)}` : "";
+        const full = optionalBoolean("card_search", "full", args.full);
         const data: any = await scryfallRequest(`/cards/search?q=${q}&page=${page}${order}`);
         // summaries by default: full objects on a broad search burn tokens; full:true for raw.
         // There is deliberately no error branch here: scryfallRequest throws on any
         // non-ok status before returning, and Scryfall answers a zero-result search
         // with 404, so an `object:"error"` body never reaches this line.
-        if (args.full) return asText(data);
+        if (full) return asText(data);
         return asText({
           total_cards: data?.total_cards,
           has_more: data?.has_more,
@@ -513,6 +532,7 @@ export function createServer(): Server {
           );
         }
         const identifiers = args.identifiers.map(toIdentifier);
+        const full = optionalBoolean("card_collection", "full", args.full);
         // >75 identifiers: sequential POSTs through the same rate-limited queue,
         // merged back into one response
         const found: any[] = [];
@@ -530,7 +550,7 @@ export function createServer(): Server {
           requested: identifiers.length,
           found: found.length,
           not_found: notFound,
-          data: args.full ? found : found.map(summarizeCard),
+          data: full ? found : found.map(summarizeCard),
         });
       }
       case "card_random": {
