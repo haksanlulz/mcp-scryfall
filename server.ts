@@ -39,8 +39,35 @@ function rateLimited<T>(fn: () => Promise<T>): Promise<T> {
 //
 // GET only. POST is card_collection, whose body is the cache key's real content, and
 // /cards/random must never be served from cache or it stops being random.
-const CACHE_TTL_MS = Number(process.env.SCRYFALL_CACHE_TTL_MS ?? 24 * 60 * 60 * 1000);
-const CACHE_MAX = Number(process.env.SCRYFALL_CACHE_MAX ?? 500);
+// Each knob below fails in its own silent direction when it parses to NaN, and
+// none of them announce it: a NaN TTL makes `CACHE_TTL_MS > 0` false, so the
+// cache is simply off; a NaN max makes `cache.size > CACHE_MAX` never true, so
+// the LRU bound the README advertises is gone and the map grows unbounded in a
+// long-lived process; and a NaN or 0 attempt cap makes `attempt < MAX_ATTEMPTS`
+// false on the first iteration, so no fetch is issued at all and attemptWithRetry
+// throws an undefined lastError -- an error with no message and no request behind
+// it. Parse once, floor each one, and say so on stderr (stdout is the JSON-RPC
+// channel and must stay clean).
+//
+// Exported for tests: the CACHE_MAX fallback is otherwise only observable at 501
+// cached entries, which is not a test worth 501 requests.
+export function envInt(name: string, fallback: number, min: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < min) {
+    console.error(
+      `mcp-scryfall: ignoring ${name}=${JSON.stringify(raw)} (want an integer >= ${min}); using ${fallback}`,
+    );
+    return fallback;
+  }
+  return n;
+}
+
+// TTL floors at 0 rather than 1: 0 is the documented off switch, read by
+// `cacheable` below.
+const CACHE_TTL_MS = envInt("SCRYFALL_CACHE_TTL_MS", 24 * 60 * 60 * 1000, 0);
+const CACHE_MAX = envInt("SCRYFALL_CACHE_MAX", 500, 1);
 const cache = new Map<string, { at: number; value: any }>();
 
 function cacheable(path: string, body?: unknown): boolean {
@@ -99,7 +126,7 @@ async function scryfallRequest(path: string, body?: unknown): Promise<any> {
 // because "no such card" and "bad query" are real answers and repeating them just
 // spends the rate limit twice. Runs inside the serialized queue on purpose -- if
 // Scryfall is asking us to slow down, every later call should wait too.
-const MAX_ATTEMPTS = Number(process.env.SCRYFALL_MAX_ATTEMPTS ?? 3);
+const MAX_ATTEMPTS = envInt("SCRYFALL_MAX_ATTEMPTS", 3, 1);
 const BACKOFF_MS = [250, 1000];
 
 // Set by attemptOnce from a 429/5xx Retry-After header, consumed by the next
