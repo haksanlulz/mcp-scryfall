@@ -220,6 +220,23 @@ function summarizeCard(card: any) {
 // Scryfall caps POST /cards/collection at 75 identifiers per request
 const COLLECTION_MAX = 75;
 
+// The low-level Server class does not validate arguments against inputSchema --
+// `required` there is advisory to the client, and a missing argument simply
+// arrives as undefined. Without this, String(undefined) becomes the literal
+// string "undefined" and buys a real rate-limited request for a card by that
+// name, so the model is handed Scryfall's 404 when the fix is "pass a name".
+// card_collection and card_rulings already validated by hand; this is the same
+// guarantee for the other three.
+function requiredString(tool: string, field: string, raw: unknown): string {
+  const value = typeof raw === "string" ? raw.trim() : "";
+  if (!value) {
+    throw new Error(
+      `${tool} requires a non-empty ${field} (string) — got ${JSON.stringify(raw)}`,
+    );
+  }
+  return value;
+}
+
 // strings are a {name} shorthand; objects pass through as Scryfall identifiers
 // ({name}, {id}, {name, set}, {set, collector_number}, ...) for Scryfall to validate
 function toIdentifier(raw: unknown): Record<string, unknown> {
@@ -368,17 +385,17 @@ export function createServer(): Server {
     const { name, arguments: args = {} } = req.params;
     switch (name) {
       case "card_named": {
-        const n = encodeURIComponent(String(args.name));
+        const n = encodeURIComponent(requiredString("card_named", "name", args.name));
         let path = `/cards/named?exact=${n}`;
         if (args.set) path += `&set=${encodeURIComponent(String(args.set))}`;
         return asText(await scryfallRequest(path));
       }
       case "card_fuzzy": {
-        const n = encodeURIComponent(String(args.name));
+        const n = encodeURIComponent(requiredString("card_fuzzy", "name", args.name));
         return asText(await scryfallRequest(`/cards/named?fuzzy=${n}`));
       }
       case "card_search": {
-        const q = encodeURIComponent(String(args.q));
+        const q = encodeURIComponent(requiredString("card_search", "q", args.q));
         const page = args.page ? `&page=${Number(args.page)}` : "";
         const order = args.order
           ? `&order=${encodeURIComponent(String(args.order))}`

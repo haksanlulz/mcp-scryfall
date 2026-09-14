@@ -446,6 +446,44 @@ describe("mcp-scryfall server", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  // The low-level Server class does not validate arguments against inputSchema,
+  // so `required` in the tool schema is advisory to the client. A missing name
+  // used to reach String(undefined) and spend a real request looking up a card
+  // called "undefined", handing the model Scryfall's problem instead of its own.
+  // Same guarantee card_collection already had, one tool per case.
+  it("card_named rejects a missing name before any request", async () => {
+    const fetchMock = mockFetch({ object: "card", name: "X" });
+    vi.stubGlobal("fetch", fetchMock);
+    const client = await connect();
+    await expect(
+      client.callTool({ name: "card_named", arguments: {} }),
+    ).rejects.toThrow(/card_named requires a non-empty name/);
+    await expect(
+      client.callTool({ name: "card_named", arguments: { name: "   " } }),
+    ).rejects.toThrow(/card_named requires a non-empty name/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("card_fuzzy rejects a missing name before any request", async () => {
+    const fetchMock = mockFetch({ object: "card", name: "X" });
+    vi.stubGlobal("fetch", fetchMock);
+    const client = await connect();
+    await expect(
+      client.callTool({ name: "card_fuzzy", arguments: {} }),
+    ).rejects.toThrow(/card_fuzzy requires a non-empty name/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("card_search rejects a missing q before any request", async () => {
+    const fetchMock = mockFetch({ object: "list", total_cards: 0, data: [] });
+    vi.stubGlobal("fetch", fetchMock);
+    const client = await connect();
+    await expect(
+      client.callTool({ name: "card_search", arguments: {} }),
+    ).rejects.toThrow(/card_search requires a non-empty q/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("throws with Scryfall's detail on a 429 rate-limit error", async () => {
     vi.stubGlobal(
       "fetch",
