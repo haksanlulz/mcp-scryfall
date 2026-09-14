@@ -144,6 +144,33 @@ describe("env knob parsing", () => {
     expect(ua).toContain("github.com/haksanlulz/mcp-scryfall");
   });
 
+  it("rejects a SCRYFALL_MAX_ATTEMPTS above the ceiling instead of honouring it", async () => {
+    // Bad only in magnitude: 3000 is a valid integer >= 1, so nothing rejected it.
+    // Retries run inside the serialized queue, so honouring it would hold every
+    // later tool call behind one wedged request. The README's table puts this row
+    // directly under SCRYFALL_CACHE_TTL_MS=86400000, which is where a mistyped
+    // value of this shape comes from.
+    const down = mockFetch(
+      { object: "error", status: 503, details: "upstream unavailable" },
+      503,
+      { "retry-after": "0" },
+    );
+    vi.stubGlobal("fetch", down);
+    const { client, envInt } = await load({ SCRYFALL_MAX_ATTEMPTS: "3000" });
+    await expect(
+      client.callTool({ name: "card_named", arguments: { name: "X" } }),
+    ).rejects.toThrow(/upstream unavailable/);
+    expect(down).toHaveBeenCalledTimes(3);
+    expect(String(logged.mock.calls[0][0])).toMatch(
+      /SCRYFALL_MAX_ATTEMPTS="3000".*integer 1\.\.10.*using 3/,
+    );
+    // the ceiling is opt-in: a knob without one still takes any integer >= min
+    vi.stubEnv("SCRYFALL_CACHE_MAX", "86400000");
+    expect(envInt("SCRYFALL_CACHE_MAX", 500, 1)).toBe(86400000);
+    expect(envInt("SCRYFALL_MAX_ATTEMPTS", 3, 1, 10)).toBe(3);
+    expect(envInt("SCRYFALL_MAX_ATTEMPTS", 3, 1)).toBe(3000);
+  });
+
   it("uses a valid SCRYFALL_MAX_ATTEMPTS as given", async () => {
     const down = mockFetch(
       { object: "error", status: 503, details: "upstream unavailable" },

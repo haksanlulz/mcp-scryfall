@@ -53,9 +53,11 @@ All four knobs are environment variables, all optional. None is a credential —
 | `SCRYFALL_CONTACT` | this repository's URL | Added to the `User-Agent`, per Scryfall's API guidelines, so they can reach you about traffic. |
 | `SCRYFALL_CACHE_TTL_MS` | `86400000` (24 h) | Lifetime of a cached GET response. `0` turns the cache off. |
 | `SCRYFALL_CACHE_MAX` | `500` | LRU entry cap for that cache. Floor 1. |
-| `SCRYFALL_MAX_ATTEMPTS` | `3` | Attempts per request, counting the first. Floor 1. |
+| `SCRYFALL_MAX_ATTEMPTS` | `3` | Attempts per request, counting the first. Floor 1, ceiling 10. |
 
-The three numeric ones are parsed once at load. A value that is not an integer, or below its floor, is rejected with a line on stderr and the default is used. That is not decoration: an unparseable value used to pass straight into the arithmetic, where a NaN TTL silently disabled the cache, a NaN cap silently removed the LRU bound, and a NaN or zero attempt cap issued no request at all.
+The three numeric ones are parsed once at load. A value that is not an integer, or outside its range, is rejected with a line on stderr and the default is used. That is not decoration: an unparseable value used to pass straight into the arithmetic, where a NaN TTL silently disabled the cache, a NaN cap silently removed the LRU bound, and a NaN or zero attempt cap issued no request at all.
+
+`SCRYFALL_MAX_ATTEMPTS` is the only one with a ceiling, because it is the only one whose too-large direction is the dangerous one: retries wait inside the same serialized queue, and each wait can be a honoured `Retry-After` of up to 10 s, so a mistyped `3000` holds every later tool call in the process behind one failing request. It is rejected rather than clamped — a value that is bad only in magnitude gets the same notice as one that is bad in form.
 
 ## Install as a bundle (.mcpb)
 

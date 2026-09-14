@@ -51,13 +51,19 @@ function rateLimited<T>(fn: () => Promise<T>): Promise<T> {
 //
 // Exported for tests: the CACHE_MAX fallback is otherwise only observable at 501
 // cached entries, which is not a test worth 501 requests.
-export function envInt(name: string, fallback: number, min: number): number {
+//
+// `max` is optional because only one knob has a dangerous upper direction, but the
+// rejection path is shared on purpose: a value that is bad only in MAGNITUDE gets
+// the same stderr notice as one that is bad in form, rather than being clamped
+// silently to something the caller never asked for.
+export function envInt(name: string, fallback: number, min: number, max = Infinity): number {
   const raw = process.env[name];
   if (raw === undefined || raw.trim() === "") return fallback;
   const n = Number(raw);
-  if (!Number.isInteger(n) || n < min) {
+  if (!Number.isInteger(n) || n < min || n > max) {
+    const want = Number.isFinite(max) ? `an integer ${min}..${max}` : `an integer >= ${min}`;
     console.error(
-      `mcp-scryfall: ignoring ${name}=${JSON.stringify(raw)} (want an integer >= ${min}); using ${fallback}`,
+      `mcp-scryfall: ignoring ${name}=${JSON.stringify(raw)} (want ${want}); using ${fallback}`,
     );
     return fallback;
   }
@@ -126,7 +132,14 @@ async function scryfallRequest(path: string, body?: unknown): Promise<any> {
 // because "no such card" and "bad query" are real answers and repeating them just
 // spends the rate limit twice. Runs inside the serialized queue on purpose -- if
 // Scryfall is asking us to slow down, every later call should wait too.
-const MAX_ATTEMPTS = envInt("SCRYFALL_MAX_ATTEMPTS", 3, 1);
+// The one knob with a ceiling as well as a floor. Retries run inside the serialized
+// queue and each backoff can be a honoured Retry-After up to the 10 s cap, so one
+// mistyped value -- 3000, or a millisecond figure copied from SCRYFALL_CACHE_TTL_MS
+// one row up in the README's table, both of which parse as valid integers >= 1 --
+// would wedge every later tool call in the process behind a wedged one while each
+// MCP request times out client-side with no explanation. 10 is already past any
+// useful attempt count against a rate-limited read API.
+const MAX_ATTEMPTS = envInt("SCRYFALL_MAX_ATTEMPTS", 3, 1, 10);
 const BACKOFF_MS = [250, 1000];
 
 // Set by attemptOnce from a 429/5xx Retry-After header, consumed by the next
