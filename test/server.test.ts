@@ -562,7 +562,7 @@ describe("mcp-scryfall server", () => {
   // per argument, each asserting the request was never issued.
   it.each([
     ["card_named", { name: "Black Lotus", set: {} }, /card_named requires set/],
-    ["card_named", { name: "Black Lotus", set: "  " }, /card_named requires set/],
+    ["card_named", { name: "Black Lotus", set: 3 }, /card_named requires set/],
     ["card_search", { q: "t:goblin", order: ["cmc"] }, /card_search requires order/],
     ["card_random", { q: ["t:goblin"] }, /card_random requires q/],
     ["card_rulings", { id: {} }, /card_rulings requires id/],
@@ -573,6 +573,54 @@ describe("mcp-scryfall server", () => {
     const client = await connect();
     await expect(client.callTool({ name: tool, arguments: args })).rejects.toThrow(msg);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  // The other half of that validation, and the half rejecting a blank got wrong:
+  // a client that fills every declared property sends "" for the ones it has no
+  // value for. That is "absent", not a bad argument -- it was ignored before the
+  // validation existed, and these pin that it still is.
+  it("treats a blank optional set as absent rather than as an error", async () => {
+    const fetchMock = mockFetch({ object: "card", name: "Sol Ring" });
+    vi.stubGlobal("fetch", fetchMock);
+    const client = await connect();
+    const res = await client.callTool({
+      name: "card_named",
+      arguments: { name: "Sol Ring", set: "" },
+    });
+    const url = String(fetchMock.mock.calls[0][0]);
+    expect(url).toContain("/cards/named?exact=Sol%20Ring");
+    expect(url).not.toContain("&set=");
+    expect(bodyOf(res).name).toBe("Sol Ring");
+  });
+
+  it("falls through to the name when card_rulings is given a blank id", async () => {
+    // {id: "", name: "..."} is the shape that regressed hardest: a blank id used
+    // to fall through to name resolution, then started throwing instead.
+    const fetchMock = vi
+      .fn(async (_url?: any, _init?: any) => new Response("{}"))
+      .mockImplementationOnce(
+        async () =>
+          new Response(JSON.stringify({ object: "card", name: "Sol Ring", id: "sol-1" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+      )
+      .mockImplementationOnce(
+        async () =>
+          new Response(JSON.stringify({ object: "list", data: [{ comment: "a ruling" }] }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const client = await connect();
+    const res = await client.callTool({
+      name: "card_rulings",
+      arguments: { id: "", name: "Sol Ring" },
+    });
+    expect(String(fetchMock.mock.calls[0][0])).toContain("/cards/named?exact=Sol%20Ring");
+    expect(String(fetchMock.mock.calls[1][0])).toContain("/cards/sol-1/rulings");
+    expect(bodyOf(res).data[0].comment).toBe("a ruling");
   });
 
   it("throws with Scryfall's detail on a 429 rate-limit error", async () => {

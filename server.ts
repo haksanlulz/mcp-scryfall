@@ -290,14 +290,21 @@ function requiredString(tool: string, field: string, raw: unknown): string {
 // and then String()-coerced. `{set: {}}` sent `&set=%5Bobject%20Object%5D` and
 // `{q: ["t:goblin"]}` a comma-joined string -- each buying a real rate-limited
 // request and handing the model Scryfall's 404 for a problem that is the caller's.
+//
+// Blank is NOT the caller's mistake, though, and rejecting it was an overcorrection:
+// a client that serializes every declared property says "absent" by sending "".
+// `{set: ""}`, `{id: "", name: "Sol Ring"}`, `{order: ""}`, `{q: ""}` all answered
+// correctly when these were truthy-tested, and all became hard failures. Only a
+// non-string is rejected; a blank or whitespace-only string means absent.
 function optionalString(tool: string, field: string, raw: unknown): string | undefined {
   if (raw === undefined || raw === null) return undefined;
-  if (typeof raw !== "string" || !raw.trim()) {
+  if (typeof raw !== "string") {
     throw new Error(
-      `${tool} requires ${field} to be a non-empty string when given — got ${JSON.stringify(raw)}`,
+      `${tool} requires ${field} to be a string when given — got ${JSON.stringify(raw)}`,
     );
   }
-  return raw.trim();
+  const value = raw.trim();
+  return value === "" ? undefined : value;
 }
 
 // The envelope's `page` is a claim about where the rows beside it came from, and
