@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -22,12 +22,50 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const manifest = JSON.parse(readFileSync(join(ROOT, "manifest.json"), "utf8"));
 const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
 
+async function connect(): Promise<Client> {
+  const server = createServer();
+  const client = new Client({ name: "test", version: "1.0.0" }, { capabilities: {} });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+  return client;
+}
+
 describe("mcpb manifest", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
   it("declares manifest version 0.3 and matches package.json's identity", () => {
     expect(manifest.manifest_version).toBe("0.3");
     expect(manifest.name).toBe(pkg.name);
     expect(manifest.version).toBe(pkg.version);
     expect(manifest.license).toBe(pkg.license);
+  });
+
+  it("introduces itself, and identifies itself to Scryfall, as that same version", async () => {
+    // The version is one fact with four owners: package.json, manifest.json, the
+    // serverInfo literal in server.ts and the User-Agent's product token. The case
+    // above ties the first two together and nothing tied the last two to anything,
+    // so a bump touching the two JSON files passed the whole gate while the server
+    // announced the old version on the wire and to the API it is a client of.
+    const fetchMock = vi.fn(async (_url?: any, _init?: any) =>
+      new Response(JSON.stringify({ object: "card", name: "Black Lotus" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const client = await connect();
+
+    expect(client.getServerVersion()).toMatchObject({
+      name: pkg.name,
+      version: pkg.version,
+    });
+
+    await client.callTool({ name: "card_named", arguments: { name: "Black Lotus" } });
+    const ua = (fetchMock.mock.calls[0][1] as any).headers["User-Agent"];
+    // Scryfall's guidelines ask for a descriptive User-Agent, and the convention
+    // there is a major.minor product token rather than the full patch version.
+    const [major, minor] = pkg.version.split(".");
+    expect(ua).toMatch(new RegExp(`^${pkg.name}/${major}\\.${minor} \\(`));
   });
 
   it("points command, args and entry_point at the same built file", () => {
@@ -61,10 +99,7 @@ describe("mcpb manifest", () => {
   });
 
   it("lists exactly the tools the server serves", async () => {
-    const server = createServer();
-    const client = new Client({ name: "test", version: "1.0.0" }, { capabilities: {} });
-    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    const client = await connect();
     const served = (await client.listTools()).tools.map((t) => t.name).sort();
     const declared = (manifest.tools ?? []).map((t: any) => t.name).sort();
     expect(declared).toEqual(served);
