@@ -262,8 +262,8 @@ const COLLECTION_MAX = 75;
 // arrives as undefined. Without this, String(undefined) becomes the literal
 // string "undefined" and buys a real rate-limited request for a card by that
 // name, so the model is handed Scryfall's 404 when the fix is "pass a name".
-// card_collection and card_rulings already validated by hand; this is the same
-// guarantee for the other three.
+// card_collection already validated its array by hand; this is the same
+// guarantee for the required string arguments.
 function requiredString(tool: string, field: string, raw: unknown): string {
   const value = typeof raw === "string" ? raw.trim() : "";
   if (!value) {
@@ -272,6 +272,21 @@ function requiredString(tool: string, field: string, raw: unknown): string {
     );
   }
   return value;
+}
+
+// The optional sibling of requiredString, and the same defect one step over:
+// absent is a legitimate answer for every one of these, so they were truthy-tested
+// and then String()-coerced. `{set: {}}` sent `&set=%5Bobject%20Object%5D` and
+// `{q: ["t:goblin"]}` a comma-joined string -- each buying a real rate-limited
+// request and handing the model Scryfall's 404 for a problem that is the caller's.
+function optionalString(tool: string, field: string, raw: unknown): string | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== "string" || !raw.trim()) {
+    throw new Error(
+      `${tool} requires ${field} to be a non-empty string when given — got ${JSON.stringify(raw)}`,
+    );
+  }
+  return raw.trim();
 }
 
 // The envelope's `page` is a claim about where the rows beside it came from, and
@@ -445,8 +460,9 @@ export function createServer(): Server {
     switch (name) {
       case "card_named": {
         const n = encodeURIComponent(requiredString("card_named", "name", args.name));
+        const set = optionalString("card_named", "set", args.set);
         let path = `/cards/named?exact=${n}`;
-        if (args.set) path += `&set=${encodeURIComponent(String(args.set))}`;
+        if (set) path += `&set=${encodeURIComponent(set)}`;
         return asText(await scryfallRequest(path));
       }
       case "card_fuzzy": {
@@ -456,9 +472,8 @@ export function createServer(): Server {
       case "card_search": {
         const q = encodeURIComponent(requiredString("card_search", "q", args.q));
         const page = resolvePage(args.page);
-        const order = args.order
-          ? `&order=${encodeURIComponent(String(args.order))}`
-          : "";
+        const orderArg = optionalString("card_search", "order", args.order);
+        const order = orderArg ? `&order=${encodeURIComponent(orderArg)}` : "";
         const data: any = await scryfallRequest(`/cards/search?q=${q}&page=${page}${order}`);
         // summaries by default: full objects on a broad search burn tokens; full:true for raw.
         // There is deliberately no error branch here: scryfallRequest throws on any
@@ -501,14 +516,18 @@ export function createServer(): Server {
         });
       }
       case "card_random": {
+        const q = optionalString("card_random", "q", args.q);
         let path = "/cards/random";
-        if (args.q) path += `?q=${encodeURIComponent(String(args.q))}`;
+        if (q) path += `?q=${encodeURIComponent(q)}`;
         return asText(await scryfallRequest(path));
       }
       case "card_rulings": {
-        let id = args.id ? String(args.id).trim() : "";
+        // Both arguments are optional individually and one of the two is required,
+        // so they take the same validation as card_named's set: present-but-not-a
+        // -string was the remaining coercion path in this file.
+        let id = optionalString("card_rulings", "id", args.id) ?? "";
         if (!id) {
-          const name = args.name ? String(args.name).trim() : "";
+          const name = optionalString("card_rulings", "name", args.name) ?? "";
           if (!name) throw new Error("card_rulings needs a name or a Scryfall id");
           // resolve exact -> id; a miss throws out of scryfallRequest with
           // Scryfall's own details rather than returning empty rulings, which

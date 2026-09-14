@@ -556,6 +556,25 @@ describe("mcp-scryfall server", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  // The optional arguments had the same hole the required ones did: truthy-tested,
+  // then String()-coerced, so a non-string reached the URL as "[object Object]" or
+  // a comma-joined list and bought a request for a filter nobody meant. One case
+  // per argument, each asserting the request was never issued.
+  it.each([
+    ["card_named", { name: "Black Lotus", set: {} }, /card_named requires set/],
+    ["card_named", { name: "Black Lotus", set: "  " }, /card_named requires set/],
+    ["card_search", { q: "t:goblin", order: ["cmc"] }, /card_search requires order/],
+    ["card_random", { q: ["t:goblin"] }, /card_random requires q/],
+    ["card_rulings", { id: {} }, /card_rulings requires id/],
+    ["card_rulings", { name: 42 }, /card_rulings requires name/],
+  ])("%s rejects a non-string optional argument before any request", async (tool, args, msg) => {
+    const fetchMock = mockFetch({ object: "card", name: "X", id: "abc" });
+    vi.stubGlobal("fetch", fetchMock);
+    const client = await connect();
+    await expect(client.callTool({ name: tool, arguments: args })).rejects.toThrow(msg);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("throws with Scryfall's detail on a 429 rate-limit error", async () => {
     vi.stubGlobal(
       "fetch",
