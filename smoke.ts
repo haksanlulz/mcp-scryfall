@@ -222,21 +222,56 @@ check("scan: no hardcoded email literal (contact belongs in SCRYFALL_CONTACT)",
 const SCRYFALL = "https://api.scryfall.com";
 const UA = "mcp-scryfall smoke test (https://github.com/haksanlulz/mcp-scryfall)";
 
-async function upstream(label: string, path: string): Promise<void> {
-  const res = await fetch(`${SCRYFALL}${path}`, {
-    headers: { "User-Agent": UA, Accept: "application/json" },
-  });
-  const json = await res.json() as Record<string, unknown>;
-  check(`upstream ${label}`, res.ok || json.object === "error",
-    `status=${res.status} object=${json.object}${"name" in json ? ` name=${json.name}` : ""}`);
-  await new Promise((r) => setTimeout(r, 120));
+/**
+ * Each endpoint is asserted by a POSITIVE property of what it served, not merely
+ * by the shape of a reply.
+ *
+ * The previous condition was `res.ok || json.object === "error"`, and Scryfall
+ * returns {"object":"error"} for every failure it owns -- so a 404, a 410 or a
+ * retired endpoint all reported PASS. The only reachable FAIL was a non-ok
+ * response that was valid JSON and NOT object:"error", and a non-JSON body threw
+ * out of res.json() at top level instead, skipping the summary and the failures
+ * report entirely. The whole request is wrapped now, so an unreachable host or an
+ * HTML error page records a FAIL rather than ending the run.
+ */
+async function upstream(
+  label: string,
+  path: string,
+  ok: (json: any) => boolean,
+): Promise<void> {
+  try {
+    const res = await fetch(`${SCRYFALL}${path}`, {
+      headers: { "User-Agent": UA, Accept: "application/json" },
+    });
+    const raw = await res.text();
+    let json: any;
+    try {
+      json = JSON.parse(raw);
+    } catch {
+      check(`upstream ${label}`, false,
+        `status=${res.status} non-JSON body: ${raw.slice(0, 120)}`);
+      return;
+    }
+    const name = json && typeof json === "object" && "name" in json ? ` name=${json.name}` : "";
+    check(`upstream ${label}`, res.ok && ok(json),
+      `status=${res.status} object=${json?.object}${name}`);
+  } catch (e) {
+    check(`upstream ${label}`, false, `request failed: ${(e as Error).message}`);
+  } finally {
+    await new Promise((r) => setTimeout(r, 120));
+  }
 }
 
-await upstream("card_named", "/cards/named?exact=Black+Lotus");
-await upstream("card_fuzzy", "/cards/named?fuzzy=lighming+bolt");
-await upstream("card_search", "/cards/search?q=is%3Afetchland");
-await upstream("card_random", "/cards/random");
-await upstream("bulk_default", "/bulk-data");
+await upstream("card_named", "/cards/named?exact=Black+Lotus",
+  (j) => j.object === "card" && j.name === "Black Lotus");
+await upstream("card_fuzzy", "/cards/named?fuzzy=lighming+bolt",
+  (j) => j.object === "card" && j.name === "Lightning Bolt");
+await upstream("card_search", "/cards/search?q=is%3Afetchland",
+  (j) => j.object === "list" && Array.isArray(j.data) && j.data.length > 0);
+await upstream("card_random", "/cards/random",
+  (j) => j.object === "card" && typeof j.name === "string" && j.name.length > 0);
+await upstream("bulk_default", "/bulk-data",
+  (j) => j.object === "list" && j.data?.[0]?.object === "bulk_data");
 
 console.log(failures.length ? `\n${failures.length} check(s) FAILED: ${failures.join(", ")}` : "\nAll checks passed.");
 process.exit(failures.length ? 1 : 0);
