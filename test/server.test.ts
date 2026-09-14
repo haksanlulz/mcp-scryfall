@@ -303,6 +303,19 @@ describe("mcp-scryfall server", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("card_search rejects a one-element array page instead of unwrapping it", async () => {
+    // String(["2"]) is "2", so a list of pages silently became one page and the
+    // envelope echoed it as if the caller had asked for it. `page` is declared
+    // number; an array is the caller's mistake, the same as a non-string `order`.
+    const fetchMock = mockFetch({ object: "list", total_cards: 1, has_more: false, data: [] });
+    vi.stubGlobal("fetch", fetchMock);
+    const client = await connect();
+    await expect(
+      client.callTool({ name: "card_search", arguments: { q: "t:goblin", page: ["2"] } }),
+    ).rejects.toThrow(/page must be an integer >= 1/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("card_search surfaces a zero-result query as an error, not an empty list", async () => {
     // Scryfall answers a search matching nothing with HTTP 404 and an object:"error"
     // body (verified live: /cards/search?q=t%3Azzzznotatype). scryfallRequest throws

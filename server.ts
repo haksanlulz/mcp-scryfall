@@ -346,9 +346,15 @@ function optionalBoolean(tool: string, field: string, raw: unknown): boolean {
 // sent &page=NaN (ignored upstream, page 1 served) while Number("abc") rendered as
 // null. Resolved once here, and a value that cannot name a page is a miss, which
 // this server surfaces as an error rather than a quietly different answer.
+//
+// Only a number or a numeric string names a page. The String() form accepted one
+// more shape than it meant to: String(["2"]) is "2", so an ARRAY of pages resolved
+// to its single element and the envelope echoed that as if the caller had asked
+// for it -- against a schema that declares `page` a number.
 function resolvePage(raw: unknown): number {
   if (raw === undefined || raw === null) return 1;
-  const n = typeof raw === "number" ? raw : Number(String(raw).trim());
+  const n =
+    typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw.trim()) : NaN;
   if (!Number.isInteger(n) || n < 1) {
     throw new Error(
       `card_search: page must be an integer >= 1 — got ${JSON.stringify(raw)}`,
