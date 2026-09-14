@@ -80,13 +80,13 @@ Built and probed on Node 20 and 22 (the CI matrix), which is why `compatibility.
 
 ## Examples
 
-Shapes below are exact; the volatile values (`total_cards`, latest-printing `set` codes) are whatever Scryfall returned when this was written.
+Shapes below are exact. The volatile values — `total_cards`, and the `set` and `collector_number` of whatever the latest printing was — are what Scryfall returned on 2026-09-14; card text and P/T are the card's, not a sample of one.
 
-`card_search` with `q = "c:rb cmc<=2 t:creature o:haste"` returns compact rows — rules text included — plus paging metadata:
+`card_search` with `q = "c:rb cmc<=2 t:creature o:haste"` returns compact rows — rules text included — plus paging metadata. One of the 12 rows:
 
 ```json
 {
-  "total_cards": 11,
+  "total_cards": 12,
   "has_more": false,
   "page": 1,
   "data": [
@@ -96,10 +96,10 @@ Shapes below are exact; the volatile values (`total_cards`, latest-printing `set
       "type_line": "Creature — Zombie Warrior",
       "cmc": 2,
       "set": "war",
-      "collector_number": "189",
+      "collector_number": "194",
       "oracle_text": "Haste\nWhenever this creature deals combat damage to a player or planeswalker, put a +1/+1 counter on this creature.\nWhen this creature dies, it deals damage equal to its power to any target.",
-      "power": "2",
-      "toughness": "2",
+      "power": "1",
+      "toughness": "1",
       "color_identity": ["B", "R"],
       "legal_commander": "legal"
     }
@@ -115,8 +115,8 @@ Shapes below are exact; the volatile values (`total_cards`, latest-printing `set
   "found": 2,
   "not_found": [{ "name": "Zzzz Definitely Not A Card" }],
   "data": [
-    { "name": "Lightning Bolt", "mana_cost": "{R}", "type_line": "Instant", "cmc": 1, "set": "msc", "collector_number": "128", "oracle_text": "Lightning Bolt deals 3 damage to any target.", "power": null, "toughness": null, "color_identity": ["R"], "legal_commander": "legal" },
-    { "name": "Counterspell", "mana_cost": "{U}{U}", "type_line": "Instant", "cmc": 2, "set": "dsc", "collector_number": "58", "oracle_text": "Counter target spell.", "power": null, "toughness": null, "color_identity": ["U"], "legal_commander": "legal" }
+    { "name": "Lightning Bolt", "mana_cost": "{R}", "type_line": "Instant", "cmc": 1, "set": "msc", "collector_number": "806", "oracle_text": "Lightning Bolt deals 3 damage to any target.", "power": null, "toughness": null, "color_identity": ["R"], "legal_commander": "legal" },
+    { "name": "Counterspell", "mana_cost": "{U}{U}", "type_line": "Instant", "cmc": 2, "set": "dsc", "collector_number": "114", "oracle_text": "Counter target spell.", "power": null, "toughness": null, "color_identity": ["U"], "legal_commander": "legal" }
   ]
 }
 ```
