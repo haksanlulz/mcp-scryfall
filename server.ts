@@ -343,7 +343,7 @@ const TOOLS = [
   {
     name: "card_search",
     description:
-      "Scryfall query-syntax search (e.g. 'is:fetchland t:land', 'c:rb cmc<=2 t:creature', 'o:\"draw a card\" pow=1'). Returns compact per-card summaries plus total_cards/has_more by default to keep responses small; pass full:true for the raw Scryfall response. Full syntax: https://scryfall.com/docs/syntax",
+      "Scryfall query-syntax search (e.g. 'is:fetchland t:land', 'c:rb cmc<=2 t:creature', 'o:\"draw a card\" pow=1'). Returns compact per-card summaries plus total_cards/has_more by default to keep responses small; pass full:true for the raw Scryfall response. A query that matches no cards is NOT an empty list — Scryfall answers it with a 404, which surfaces as an error carrying Scryfall's details. That error is the answer 'no cards match'; do not retry it as a tool failure. Full syntax: https://scryfall.com/docs/syntax",
     inputSchema: {
       type: "object",
       properties: {
@@ -460,8 +460,11 @@ export function createServer(): Server {
           ? `&order=${encodeURIComponent(String(args.order))}`
           : "";
         const data: any = await scryfallRequest(`/cards/search?q=${q}&page=${page}${order}`);
-        // summaries by default: full objects on a broad search burn tokens; full:true for raw
-        if (args.full || data?.object === "error") return asText(data);
+        // summaries by default: full objects on a broad search burn tokens; full:true for raw.
+        // There is deliberately no error branch here: scryfallRequest throws on any
+        // non-ok status before returning, and Scryfall answers a zero-result search
+        // with 404, so an `object:"error"` body never reaches this line.
+        if (args.full) return asText(data);
         return asText({
           total_cards: data?.total_cards,
           has_more: data?.has_more,

@@ -10,7 +10,7 @@ LLMs misremember card names, costs, and rules text. This looks them up on live S
 |------|--------------|
 | `card_named` | Exact-name lookup (optional set code). Full card object. |
 | `card_fuzzy` | Fuzzy-name lookup. Handles typos and partial names. |
-| `card_search` | [Scryfall query-syntax](https://scryfall.com/docs/syntax) search. Returns compact summaries by default (pass `full: true` for raw objects). |
+| `card_search` | [Scryfall query-syntax](https://scryfall.com/docs/syntax) search. Returns compact summaries by default (pass `full: true` for raw objects). A query matching no cards is an error, not an empty list — Scryfall answers a zero-result search with a 404. |
 | `card_collection` | Batch lookup (`POST /cards/collection`) — resolve a whole decklist in one call. Takes exact-name strings and/or `{name}` / `{id}` / `{name, set}` / `{set, collector_number}` identifiers; misses come back in `not_found`. |
 | `card_random` | A random card, optionally filtered by a query. |
 | `card_rulings` | Official Wizards rulings for one card, by exact name or Scryfall id — the errata and corner-case answers that are not in the oracle text. |

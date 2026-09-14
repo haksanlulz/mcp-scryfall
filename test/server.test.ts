@@ -261,6 +261,30 @@ describe("mcp-scryfall server", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("card_search surfaces a zero-result query as an error, not an empty list", async () => {
+    // Scryfall answers a search matching nothing with HTTP 404 and an object:"error"
+    // body (verified live: /cards/search?q=t%3Azzzznotatype). scryfallRequest throws
+    // on any non-ok status, so that body never reaches the summarizer -- there is no
+    // total_cards: 0 shape to return, and the tool description says so.
+    vi.stubGlobal(
+      "fetch",
+      mockFetch(
+        {
+          object: "error",
+          code: "not_found",
+          status: 404,
+          details:
+            "Your query didn’t match any cards. Adjust your search terms or refer to the syntax guide at https://scryfall.com/docs/reference",
+        },
+        404,
+      ),
+    );
+    const client = await connect();
+    await expect(
+      client.callTool({ name: "card_search", arguments: { q: "t:zzzznotatype" } }),
+    ).rejects.toThrow(/match any cards/);
+  });
+
   it("card_random hits /cards/random with no query by default", async () => {
     const fetchMock = mockFetch({ object: "card", name: "Forest" });
     vi.stubGlobal("fetch", fetchMock);
