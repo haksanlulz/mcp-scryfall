@@ -118,14 +118,41 @@ describe("Retry-After", () => {
     ).toBe(250);
   });
 
-  it("floors Retry-After: 0 at the 100 ms pacing delay instead of retrying instantly", async () => {
+  it("never waits less than the backoff it replaced, so Retry-After: 0 waits 250 ms", async () => {
     // 0 is a real number, so `pendingRetryAfter ?? wait` took it and the backoff
-    // became setTimeout(..., 0). The 100 ms pacer wraps the whole retry loop, not
-    // each attempt, so every remaining attempt fired back to back -- no spacing at
-    // all, on a 429. Scryfall's own test server answers with this header.
+    // became setTimeout(..., 0): every remaining attempt fired back to back, on a
+    // 429. Flooring it at the 100 ms pacing delay was still 2.5x FASTER than the
+    // 250 ms this attempt would have waited with no header at all, so the floor is
+    // the backoff itself. Scryfall's own test server answers with this header.
     const client = await connect();
     startClock();
-    expect(await gapAcrossOneRetry(client, "Card R0", { "retry-after": "0" })).toBe(100);
+    expect(await gapAcrossOneRetry(client, "Card R0", { "retry-after": "0" })).toBe(250);
+  });
+
+  it("floors each attempt at its own backoff, not at one fixed number", async () => {
+    // The second backoff is 1000 ms. A single fixed floor would hold the first
+    // attempt and let the second collapse, so the comparison has to be per attempt.
+    const client = await connect();
+    startClock();
+    const at: number[] = [];
+    let n = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        at.push(Date.now());
+        return ++n <= 2
+          ? res({ object: "error", status: 429, details: "slow down" }, 429, {
+              "retry-after": "0",
+            })
+          : res({ object: "card", name: "Card R00" }, 200);
+      }),
+    );
+    const call = client.callTool({ name: "card_named", arguments: { name: "Card R00" } });
+    await vi.advanceTimersByTimeAsync(RUN_MS);
+    await call;
+    expect(at).toHaveLength(3);
+    expect(at[1] - at[0]).toBe(250);
+    expect(at[2] - at[1]).toBe(1000);
   });
 });
 

@@ -143,17 +143,15 @@ function retryAfterMs(res: Response): number | null {
   const secs = Number(raw);
   // Retry-After is seconds or an HTTP date; only the numeric form is worth honouring.
   //
-  // Floored at DELAY_MS, and that floor is not cosmetic. `Retry-After: 0` parses to
-  // a real 0, which `pendingRetryAfter ?? wait` then takes (?? guards null and
-  // undefined, not 0), collapsing the backoff to setTimeout(..., 0). The 100 ms
-  // pacer runs once per scryfallRequest, wrapping the whole retry loop rather than
-  // each attempt, so a 429 answered with `Retry-After: 0` fired every remaining
-  // attempt back to back with no spacing at all -- on the one path where Scryfall's
-  // etiquette matters most. Honouring the header must never pace faster than
-  // ignoring it would.
-  return Number.isFinite(secs) && secs >= 0
-    ? Math.min(Math.max(secs * 1000, DELAY_MS), 10_000)
-    : null;
+  // Capped at 10 s so an upstream number cannot wedge the serialized queue for that
+  // long. There is deliberately no floor HERE. The floor that matters is the backoff
+  // this attempt would have used anyway, and that number is only in scope at the
+  // consumption site in attemptWithRetry. A floor of DELAY_MS (100 ms) looked like
+  // one and was not: the no-header wait is 250 ms on the first retry and 1000 ms on
+  // the second, so `Retry-After: 0` still retried 2.5x faster than ignoring the
+  // header would have -- on a 429, the one path where Scryfall's etiquette matters
+  // most, and the exact thing the floor was added to stop.
+  return Number.isFinite(secs) && secs >= 0 ? Math.min(secs * 1000, 10_000) : null;
 }
 
 async function attemptWithRetry(path: string, body?: unknown): Promise<any> {
@@ -165,7 +163,9 @@ async function attemptWithRetry(path: string, body?: unknown): Promise<any> {
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     if (attempt > 0) {
       const wait = BACKOFF_MS[Math.min(attempt - 1, BACKOFF_MS.length - 1)];
-      await new Promise((r) => setTimeout(r, pendingRetryAfter ?? wait));
+      // A honoured Retry-After replaces the backoff but never shortens it: honouring
+      // the header must not pace faster than ignoring it would.
+      await new Promise((r) => setTimeout(r, Math.max(pendingRetryAfter ?? 0, wait)));
       pendingRetryAfter = null;
     }
     try {
