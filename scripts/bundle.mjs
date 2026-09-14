@@ -39,9 +39,28 @@ const EXPECTED_TOOLS = [
   "card_search",
 ];
 
+// shell:true is needed on Windows to resolve npm and npx, which are .cmd shims and
+// are not executable on their own -- and a shell re-splits the joined argv on
+// whitespace. STAGE, PROBE and the packed `out` path are all built from ROOT, i.e.
+// the clone location, so a clone under "My Projects" or "Google Drive" turned
+// `mcpb pack <STAGE> <out>` into four arguments and failed with a message pointing
+// at mcpb rather than at the path. manifest.json declares darwin, win32 and linux.
+//
+// Deliberately not JSON.stringify: it escapes backslashes, and cmd.exe does no
+// escape processing inside double quotes, so a Windows path would arrive with every
+// separator doubled.
+function shellQuote(arg) {
+  if (!/[\s"'$`\\]/.test(arg)) return arg;
+  // cmd.exe: double quotes group and nothing inside them is unescaped. A Windows
+  // path cannot contain a double quote, so this covers everything run() is passed.
+  if (process.platform === "win32") return `"${arg}"`;
+  // sh: single quotes are literal; close, escape, reopen to carry an embedded one.
+  return `'${arg.replace(/'/g, `'\\''`)}'`;
+}
+
 function run(label, cmd, args, opts = {}) {
   console.log(`\n> ${label}`);
-  const r = spawnSync(cmd, args, { stdio: "inherit", shell: true, ...opts });
+  const r = spawnSync(cmd, args.map(shellQuote), { stdio: "inherit", shell: true, ...opts });
   if (r.status !== 0) {
     console.error(`FAILED: ${label} (exit ${r.status})`);
     process.exit(1);
