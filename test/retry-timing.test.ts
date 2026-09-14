@@ -117,6 +117,16 @@ describe("Retry-After", () => {
       }),
     ).toBe(250);
   });
+
+  it("floors Retry-After: 0 at the 100 ms pacing delay instead of retrying instantly", async () => {
+    // 0 is a real number, so `pendingRetryAfter ?? wait` took it and the backoff
+    // became setTimeout(..., 0). The 100 ms pacer wraps the whole retry loop, not
+    // each attempt, so every remaining attempt fired back to back -- no spacing at
+    // all, on a 429. Scryfall's own test server answers with this header.
+    const client = await connect();
+    startClock();
+    expect(await gapAcrossOneRetry(client, "Card R0", { "retry-after": "0" })).toBe(100);
+  });
 });
 
 describe("retry timing", () => {

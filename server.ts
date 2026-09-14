@@ -141,8 +141,19 @@ function retryAfterMs(res: Response): number | null {
   const raw = res.headers.get("retry-after");
   if (!raw) return null;
   const secs = Number(raw);
-  // Retry-After is seconds or an HTTP date; only the numeric form is worth honouring
-  return Number.isFinite(secs) && secs >= 0 ? Math.min(secs * 1000, 10_000) : null;
+  // Retry-After is seconds or an HTTP date; only the numeric form is worth honouring.
+  //
+  // Floored at DELAY_MS, and that floor is not cosmetic. `Retry-After: 0` parses to
+  // a real 0, which `pendingRetryAfter ?? wait` then takes (?? guards null and
+  // undefined, not 0), collapsing the backoff to setTimeout(..., 0). The 100 ms
+  // pacer runs once per scryfallRequest, wrapping the whole retry loop rather than
+  // each attempt, so a 429 answered with `Retry-After: 0` fired every remaining
+  // attempt back to back with no spacing at all -- on the one path where Scryfall's
+  // etiquette matters most. Honouring the header must never pace faster than
+  // ignoring it would.
+  return Number.isFinite(secs) && secs >= 0
+    ? Math.min(Math.max(secs * 1000, DELAY_MS), 10_000)
+    : null;
 }
 
 async function attemptWithRetry(path: string, body?: unknown): Promise<any> {
