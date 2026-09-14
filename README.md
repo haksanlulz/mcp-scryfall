@@ -109,6 +109,8 @@ What they cover: `test/server.test.ts` drives every tool through a real MCP clie
 
 Mutation probe, 2026-09-11: changing `COLLECTION_MAX` in `server.ts` from 75 to 74 fails exactly one test, `card_collection chunks past Scryfall's 75-identifier cap and merges pages` (expected a length of 75 but got 74); the other 33 pass. Source restored after the run.
 
+Mutation probe, 2026-09-14: `retryAfterMs` returning `null` fails three tests — the two asserting a honoured `Retry-After` (2 s, and the 10 s cap) and the one asserting a stale `Retry-After` is not carried into the next call. Dropping its `Number.isFinite` guard instead fails exactly the HTTP-date case, which the first mutation leaves green. Two mutations, because those cases do not share one kill: a `null` return and an unguarded parse break different halves of the function. Before these tests existed, `retryAfterMs` could have been replaced by `return null` with the whole suite still green — the one test that sent the header sent `retry-after: 0` and asserted only the call count. Source restored after each run.
+
 Call-count assertions (`toHaveBeenCalledTimes`, `not.toHaveBeenCalled`) appear at 10 sites; each one pins a contract (one POST per 75-chunk, no request on rejected input, cache hit vs miss, retry attempts). Nine sit next to an assertion on the payload or result; the tenth (`card_random` is never cached) has the call count as its only assertion, because two fetches is the not-cached contract. Policy: assert behavior and payloads, not that a function was called.
 
 ## API etiquette

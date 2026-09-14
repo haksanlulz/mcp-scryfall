@@ -57,6 +57,68 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+/**
+ * Fail once with the given response headers, succeed on the retry, and return the
+ * gap between the two attempts -- which is the wait the retry layer chose.
+ */
+async function gapAcrossOneRetry(
+  client: Client,
+  cardName: string,
+  headers: Record<string, string>,
+): Promise<number> {
+  const at: number[] = [];
+  let n = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => {
+      at.push(Date.now());
+      return ++n === 1
+        ? res({ object: "error", status: 429, details: "slow down" }, 429, headers)
+        : res({ object: "card", name: cardName }, 200);
+    }),
+  );
+  const call = client.callTool({ name: "card_named", arguments: { name: cardName } });
+  await vi.advanceTimersByTimeAsync(RUN_MS);
+  await call;
+  expect(at).toHaveLength(2);
+  return at[1] - at[0];
+}
+
+describe("Retry-After", () => {
+  // Before these, exactly one test sent the header at all -- with a value of "0",
+  // asserting only the call count and the card name. Both hold identically whether
+  // the header is honoured or ignored, because ignoring it just means waiting the
+  // 250 ms backoff and nothing measured the gap: retryAfterMs could have been
+  // replaced by `return null` with the whole suite still green.
+
+  it("waits the number of seconds the header asks for", async () => {
+    const client = await connect();
+    startClock();
+    expect(await gapAcrossOneRetry(client, "Card R2", { "retry-after": "2" })).toBe(2000);
+  });
+
+  it("caps an outsized Retry-After at 10 s", async () => {
+    // Scryfall's own 429 body says 60 s. Honouring an arbitrary upstream number
+    // would wedge the serialized queue for that long, so the header is advice with
+    // a ceiling, not an instruction.
+    const client = await connect();
+    startClock();
+    expect(await gapAcrossOneRetry(client, "Card R9999", { "retry-after": "9999" })).toBe(10_000);
+  });
+
+  it("ignores the HTTP-date form and falls back to the backoff", async () => {
+    // Retry-After is seconds or an HTTP date. Only the numeric form is parsed;
+    // Number() of a date string is NaN, and a NaN wait is not a wait at all.
+    const client = await connect();
+    startClock();
+    expect(
+      await gapAcrossOneRetry(client, "Card RDate", {
+        "retry-after": "Wed, 21 Oct 2026 07:28:00 GMT",
+      }),
+    ).toBe(250);
+  });
+});
+
 describe("retry timing", () => {
   it("does not carry a Retry-After past the attempt cap into the next call", async () => {
     // pendingRetryAfter is module-global: attemptOnce sets it before throwing and
