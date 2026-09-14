@@ -102,6 +102,14 @@ async function scryfallRequest(path: string, body?: unknown): Promise<any> {
 const MAX_ATTEMPTS = Number(process.env.SCRYFALL_MAX_ATTEMPTS ?? 3);
 const BACKOFF_MS = [250, 1000];
 
+// Set by attemptOnce from a 429/5xx Retry-After header, consumed by the next
+// backoff of the SAME call. Module-global because attemptOnce throws rather than
+// returns, so there is nowhere else to hand it over -- which makes clearing it a
+// real obligation: a value left behind by the LAST attempt of a call that then
+// gave up is otherwise spent on an unrelated later request's first backoff, up to
+// the 10s ceiling below. attemptWithRetry owns the reset.
+let pendingRetryAfter: number | null = null;
+
 function retryAfterMs(res: Response): number | null {
   const raw = res.headers.get("retry-after");
   if (!raw) return null;
@@ -111,6 +119,10 @@ function retryAfterMs(res: Response): number | null {
 }
 
 async function attemptWithRetry(path: string, body?: unknown): Promise<any> {
+  // This call's Retry-After budget starts empty. Without the reset, an earlier
+  // call that exhausted the attempt cap with a Retry-After still pending hands
+  // its wait to this one.
+  pendingRetryAfter = null;
   let lastError: unknown;
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     if (attempt > 0) {
@@ -139,8 +151,6 @@ class RetryableError extends Error {
 // A non-JSON body is not transient: it is a rejected request or a changed API,
 // and it answers the same however many times it is asked. Left un-retried on
 // purpose -- the same reasoning as 404.
-let pendingRetryAfter: number | null = null;
-
 async function attemptOnce(path: string, body?: unknown): Promise<any> {
   {
     let res: Response;
