@@ -25,6 +25,7 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const BUILD = join(ROOT, "build");
+const DIST = join(ROOT, "dist");
 const STAGE = join(BUILD, "bundle");
 const PROBE = join(BUILD, "probe");
 const MCPB_VERSION = "2.1.2"; // pinned: an unpinned toolchain is a silent drift channel
@@ -49,7 +50,15 @@ function run(label, cmd, args, opts = {}) {
 
 /* ------------------------------------------------------------- clean + build */
 
+// dist/ is cleaned too, and it is the one that ships: tsc emits into it without
+// removing outputs it did not produce, and the staging step below copies the whole
+// directory rather than this build's files. A developer who has ever run a bare
+// `npx tsc` -- the default config includes smoke.ts and test/ -- leaves dist/smoke.js
+// and dist/test/*.js behind, and so does any file later renamed or deleted; all of
+// it packs into the .mcpb silently, since the probe only checks that the entry point
+// exists and that tools/list is the seven tools.
 rmSync(BUILD, { recursive: true, force: true });
+rmSync(DIST, { recursive: true, force: true });
 run("tsc -p tsconfig.build.json", "npx", ["tsc", "-p", "tsconfig.build.json"], { cwd: ROOT });
 
 const manifest = JSON.parse(readFileSync(join(ROOT, "manifest.json"), "utf8"));
@@ -62,7 +71,7 @@ if (!existsSync(entry)) {
 /* ------------------------------------------------------------------- staging */
 
 mkdirSync(STAGE, { recursive: true });
-cpSync(join(ROOT, "dist"), join(STAGE, "dist"), { recursive: true });
+cpSync(DIST, join(STAGE, "dist"), { recursive: true });
 for (const f of ["manifest.json", "package.json", "package-lock.json", "README.md", "LICENSE"]) {
   cpSync(join(ROOT, f), join(STAGE, f));
 }
