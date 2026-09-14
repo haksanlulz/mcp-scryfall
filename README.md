@@ -44,7 +44,18 @@ Add it to your client's MCP config:
 }
 ```
 
-`SCRYFALL_CONTACT` is optional; it is added to the `User-Agent` per Scryfall's API guidelines.
+## Configuration
+
+All four knobs are environment variables, all optional. None is a credential — Scryfall's API needs no key.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `SCRYFALL_CONTACT` | this repository's URL | Added to the `User-Agent`, per Scryfall's API guidelines, so they can reach you about traffic. |
+| `SCRYFALL_CACHE_TTL_MS` | `86400000` (24 h) | Lifetime of a cached GET response. `0` turns the cache off. |
+| `SCRYFALL_CACHE_MAX` | `500` | LRU entry cap for that cache. Floor 1. |
+| `SCRYFALL_MAX_ATTEMPTS` | `3` | Attempts per request, counting the first. Floor 1. |
+
+The three numeric ones are parsed once at load. A value that is not an integer, or below its floor, is rejected with a line on stderr and the default is used. That is not decoration: an unparseable value used to pass straight into the arithmetic, where a NaN TTL silently disabled the cache, a NaN cap silently removed the LRU bound, and a NaN or zero attempt cap issued no request at all.
 
 ## Install as a bundle (.mcpb)
 
@@ -114,19 +125,54 @@ Scryfall caps one collection POST at 75 identifiers; longer lists are split into
 
 Pass `full: true` to either tool to get the raw Scryfall objects instead.
 
+### The loop this exists for
+
+Checking a decklist is the whole point: a model writing one produces names that are *nearly* right, and a near-miss is the failure mode that reads as success. `card_collection` is the batch form of that check — every name either comes back with its canonical spelling or appears in `not_found`, and nothing passes silently.
+
+Run live 2026-09-14, five identifiers, one request. The `set` and `collector_number` values are whatever the latest printing was that day; the rest is exact:
+
+```json
+{
+  "requested": 5,
+  "found": 3,
+  "not_found": [
+    { "name": "Sylvan Libary" },
+    { "name": "Teferi, Hero of Dominara" }
+  ],
+  "data": [
+    { "name": "Sol Ring", "mana_cost": "{1}", "type_line": "Artifact", "cmc": 1, "set": "msc", "collector_number": "211", "oracle_text": "{T}: Add {C}{C}.", "power": null, "toughness": null, "color_identity": [], "legal_commander": "legal" },
+    { "name": "Arcane Signet", "mana_cost": "{2}", "type_line": "Artifact", "cmc": 2, "set": "msc", "collector_number": "191", "oracle_text": "{T}: Add one mana of any color in your commander's color identity.", "power": null, "toughness": null, "color_identity": [], "legal_commander": "legal" },
+    { "name": "Cyclonic Rift", "mana_cost": "{1}{U}", "type_line": "Instant", "cmc": 2, "set": "rvr", "collector_number": "40", "oracle_text": "Return target nonland permanent you don't control to its owner's hand.\nOverload {6}{U} (You may cast this spell for its overload cost. If you do, change \"target\" in its text to \"each.\")", "power": null, "toughness": null, "color_identity": ["U"], "legal_commander": "legal" }
+  ]
+}
+```
+
+Two of the five were wrong, and both are the shape that gets past a reader: `Sylvan Libary` is a dropped letter, and `Teferi, Hero of Dominara` is a subtitle recalled one letter off from `Dominaria`. Neither resolves — exact-name matching does not guess — so the builder's next move is to fix those two names and re-run, not to write them into a deck list. `legal_commander` on the three that did resolve answers the other half in the same response.
+
+If a name is wrong in a way you cannot see, `card_fuzzy` one identifier at a time will find the intended card; `card_collection` will not, deliberately.
+
 ## Testing
 
 ```bash
 npm test         # offline: vitest over an in-memory MCP transport, fetch mocked, no network
-npm run smoke    # live: spawns the real server over stdio and calls Scryfall once per tool
 npm run typecheck
+npm run bundle   # offline: packs the .mcpb, then drives the PACKED artifact over stdio
+npm run smoke    # live: spawns the real server over stdio and calls Scryfall once per tool
 ```
 
-Two tiers, split by script rather than by marker. `npm test` is the gate; `npm run smoke` is a manual check against the live API.
+Tiers split by script rather than by marker. `npm test`, `npm run typecheck` and `npm run bundle` are the gate and all run in CI; `npm run smoke` is a manual check against the live API and costs about 13 requests, so space repeated runs — three back to back earned a real 429 on 2026-09-14.
 
-Counts as of 2026-09-11: 455 lines of server source (`wc -l index.ts server.ts`; `smoke.ts` is 242 more and is the live tier, not app code), 744 lines of tests (`wc -l test/*.ts`), 34 tests across 2 files (`grep -c "^\s*it(" test/*.ts`).
+Counts as of 2026-09-14: 535 lines of server source (`wc -l index.ts server.ts`; `smoke.ts` is 277 more and is the live tier, and `scripts/bundle.mjs` 169 more and is build tooling, neither of them app code), 1,255 lines of tests (`wc -l test/*.ts`), 61 tests across 5 files — the number `npm test` reports. `grep -c "^\s*it(" test/*.ts` gives 59, because one case is table-driven over three values; trust the runner.
 
-What they cover: `test/server.test.ts` drives every tool through a real MCP client over the in-memory transport and asserts on the URLs and POST bodies sent to the mocked `fetch` and on the JSON returned, including error surfacing (404, 429, non-JSON), the 75-identifier chunking in `card_collection`, the abort timeout, rate-limit serialization, the response cache (hit, never for `card_random`, never for errors) and the 429/5xx retry with its attempt cap. `test/no-http-stack.test.ts` pins that this repo's own source imports only the stdio transport and never an HTTP one (the SDK still pulls hono and express into the tree; that test does not and cannot prove they never load). Nothing here touches the network.
+What they cover:
+
+- `test/server.test.ts` drives every tool through a real MCP client over the in-memory transport and asserts on the URLs and POST bodies sent to the mocked `fetch` and on the JSON returned: error surfacing (404, 429, non-JSON), the 75-identifier chunking in `card_collection`, the abort timeout, rate-limit serialization, the response cache (hit, never for `card_random`, never for errors), the 429/5xx retry and its attempt cap, argument validation before any request is issued, and that `card_search`'s outgoing `page` and echoed `page` are the same value.
+- `test/retry-timing.test.ts` measures the retry waits on a fake clock, which is the only way to tell a honoured `Retry-After` from an ignored one. Its own file because a fake clock advanced by N ms leaves the rate limiter's timestamp N ms in the future, and vitest isolates module state per file.
+- `test/env-config.test.ts` re-imports the server with stubbed environment variables, since the knobs are read once at load: bad values falling back, `SCRYFALL_CACHE_TTL_MS=0` as the off switch, LRU eviction, the attempt cap still issuing a request, and `SCRYFALL_CONTACT` reaching the `User-Agent` (including the empty-value fallback an optional bundle field produces).
+- `test/bundle-manifest.test.ts` pins `manifest.json` against the code — entry point, the `user_config` wiring, the privacy policy, and the manifest's tool list against what `tools/list` actually serves.
+- `test/no-http-stack.test.ts` pins that this repo's own source imports only the stdio transport and never an HTTP one (the SDK still pulls hono and express into the tree; that test does not and cannot prove they never load).
+
+Nothing in `npm test` touches the network.
 
 Mutation probe, 2026-09-11: changing `COLLECTION_MAX` in `server.ts` from 75 to 74 fails exactly one test, `card_collection chunks past Scryfall's 75-identifier cap and merges pages` (expected a length of 75 but got 74); the other 33 pass. Source restored after the run.
 
@@ -138,9 +184,14 @@ Call-count assertions (`toHaveBeenCalledTimes`, `not.toHaveBeenCalled`) appear a
 
 Follows [Scryfall's guidelines](https://scryfall.com/docs/api): a 100 ms delay between requests, a descriptive `User-Agent`, and `Accept: application/json`. `card_collection` never posts more than Scryfall's cap of 75 identifiers per request; chunked requests go through the same delay queue.
 
+Backing off is part of that. A 429, any 5xx, and network or timeout failures are retried up to `SCRYFALL_MAX_ATTEMPTS` (3 by default, counting the first), with a 250 ms then 1000 ms backoff. A numeric `Retry-After` header replaces that backoff, capped at 10 s so an upstream number cannot wedge the queue; the HTTP-date form is ignored. Retries run inside the same serialized queue, so when Scryfall asks this process to slow down, every later call waits too. A 404 and other 4xx are **not** retried: "no such card" and "bad query" are real answers, and asking twice spends the rate limit to learn the same thing.
+
+Requests time out after 15 s. GET responses are cached in memory, which Scryfall's guidelines also ask for; `/cards/random` never is.
+
 ## Limitations
 
-- In-memory GET cache only (24 h TTL by default, 500-entry LRU cap, `card_random` excluded); nothing persists across restarts and there is no offline store. `bulk_default` lists the bulk-data endpoints; downloading them is the caller's job.
+- In-memory GET cache only (defaults and how to change them: Configuration above; `card_random` is never cached); nothing persists across restarts and there is no offline store. `bulk_default` lists the bulk-data endpoints; downloading them is the caller's job.
+- **The npm package named `mcp-scryfall` is a different project.** That unscoped name was published by an unrelated maintainer in February 2025 and sits at 0.1.1 with its own `mcp-scryfall` bin, so `npx mcp-scryfall` runs that server, not this one. Install this one by cloning, or from the `.mcpb` bundle. Publishing from this repo under that name would 403; picking a scope is an open decision, not something to do quietly.
 - Requests never run in parallel — everything funnels through the one 100 ms-spaced queue, so a large `card_collection` (sequential 75-identifier POSTs) takes proportionally longer. Each request times out after 15 s.
 - Thin passthrough: beyond the compact summaries, results are Scryfall's data as returned — no legality checking, no rules logic.
 

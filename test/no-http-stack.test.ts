@@ -55,9 +55,15 @@ describe("dependency surface", () => {
   });
 
   it("declares exactly one runtime dependency", () => {
-    // The tarball ships dist/ plus whatever `dependencies` resolves to, so
-    // keeping that list at one entry is what bounds the shipped surface. A
-    // second runtime dep should be a deliberate decision, not a surprise.
+    // What this bounds is `npm install` in a clone, and the production-only
+    // install that goes into the .mcpb bundle -- both resolve `dependencies` and
+    // nothing else, so one entry there is the whole runtime surface a user ends
+    // up executing. (An earlier version of this comment justified the assertion
+    // with an npm tarball shipping dist/. There is no such tarball: the repo has
+    // no `files` field and is not published under this name -- the npm package
+    // called mcp-scryfall belongs to someone else. The assertion was right and
+    // its stated reason was not.) A second runtime dependency should be a
+    // deliberate decision, not a surprise.
     const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
     expect(Object.keys(pkg.dependencies ?? {})).toEqual(["@modelcontextprotocol/sdk"]);
   });
