@@ -46,6 +46,27 @@ Add it to your client's MCP config:
 
 `SCRYFALL_CONTACT` is optional; it is added to the `User-Agent` per Scryfall's API guidelines.
 
+## Install as a bundle (.mcpb)
+
+```bash
+npm install
+npm run bundle
+```
+
+Writes `build/mcp-scryfall-<version>.mcpb`, then unpacks it and drives the packed entry point over stdio. Open the `.mcpb` with an MCPB host to install. The install dialog offers one optional field, **Contact**, which the manifest maps to `SCRYFALL_CONTACT`; leave it blank and the `User-Agent` falls back to this repository's URL. There is no API key — Scryfall needs none.
+
+Sizes as of 2026-09-14: 3.2 MB packed, 10.5 MB unpacked, 2,268 files, nearly all of it the MCP SDK's dependency tree. The staging install is `npm ci --omit=dev` off this repo's lockfile, so tsx, vitest and typescript are not in it.
+
+The bundle is the only place this repo emits JavaScript. Everything else runs `.ts` through tsx, but an MCPB host runs `node <entry_point>` with no toolchain of its own, so `manifest.json` (MCPB manifest version 0.3) points at `dist/index.js` built by `tsconfig.build.json`. Two shipping paths for one server is a drift risk, so `npm run bundle` does not stop at packing — it unpacks what it just wrote and asserts the handshake and all seven tools against it, offline. For a live round-trip through the built entry point rather than the source:
+
+```bash
+SMOKE_SERVER_PATH=/abs/path/to/mcp-scryfall/dist/index.js npm run smoke
+```
+
+`test/bundle-manifest.test.ts` pins the manifest against the code in the offline gate: `entry_point` and `args` naming the same file, `SCRYFALL_CONTACT` wired to a declared optional non-sensitive field, a privacy policy present (the bundle reaches Scryfall), and the manifest's tool list equal to what `tools/list` serves. What it cannot check is whether a host's install dialog really maps that field into the environment — that is host behavior, and only a real install exercises it.
+
+Built and probed on Node 20 and 22 (the CI matrix), which is why `compatibility.runtimes.node` says `>=20`. `package.json`'s `engines` still says `>=18`; nothing here has been run on 18.
+
 ## Examples
 
 Shapes below are exact; the volatile values (`total_cards`, latest-printing `set` codes) are whatever Scryfall returned when this was written.

@@ -25,7 +25,9 @@
     "start": "tsx index.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "smoke": "tsx smoke.ts"
+    "smoke": "tsx smoke.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "bundle": "node scripts/bundle.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0"

@@ -1,0 +1,57 @@
+{
+  "$schema": "https://raw.githubusercontent.com/anthropics/mcpb/main/dist/mcpb-manifest-v0.3.schema.json",
+  "manifest_version": "0.3",
+  "name": "mcp-scryfall",
+  "display_name": "Scryfall (Magic: The Gathering)",
+  "version": "1.1.0",
+  "description": "Live Magic: The Gathering card lookup via the Scryfall API.",
+  "long_description": "LLMs misremember card names, costs, and rules text. This server looks them up on live Scryfall instead: exact and fuzzy name lookup, query-syntax search, batch decklist resolution with an explicit not_found list, official rulings, and the bulk-data endpoint list. Read-only — it never writes anything to Scryfall or anywhere else.",
+  "author": {
+    "name": "Abishai James",
+    "url": "https://github.com/haksanlulz"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/haksanlulz/mcp-scryfall"
+  },
+  "homepage": "https://github.com/haksanlulz/mcp-scryfall",
+  "documentation": "https://github.com/haksanlulz/mcp-scryfall#readme",
+  "license": "MIT",
+  "keywords": ["mcp", "scryfall", "mtg", "magic-the-gathering", "cards"],
+  "privacy_policies": ["https://scryfall.com/privacy"],
+  "server": {
+    "type": "node",
+    "entry_point": "dist/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/dist/index.js"],
+      "env": {
+        "SCRYFALL_CONTACT": "${user_config.scryfall_contact}"
+      }
+    }
+  },
+  "tools": [
+    { "name": "card_named", "description": "Exact-name lookup of a Magic card." },
+    { "name": "card_fuzzy", "description": "Fuzzy-name lookup; handles typos and partial names." },
+    { "name": "card_search", "description": "Scryfall query-syntax search, compact summaries by default." },
+    { "name": "card_collection", "description": "Batch lookup of many cards in one call, with an explicit not_found list." },
+    { "name": "card_random", "description": "A random card, optionally filtered by a query." },
+    { "name": "card_rulings", "description": "Official Wizards rulings for one card." },
+    { "name": "bulk_default", "description": "Lists Scryfall bulk-data endpoints." }
+  ],
+  "user_config": {
+    "scryfall_contact": {
+      "type": "string",
+      "title": "Contact (optional)",
+      "description": "An email or URL added to the User-Agent, which Scryfall's API guidelines ask clients to send so they can reach you about traffic. Not a credential, and nothing is sent to anyone but Scryfall. Leave blank to use this project's repository URL.",
+      "required": false,
+      "sensitive": false
+    }
+  },
+  "compatibility": {
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": {
+      "node": ">=20"
+    }
+  }
+}

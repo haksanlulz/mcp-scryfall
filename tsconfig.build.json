@@ -1,0 +1,9 @@
+{
+  // The repo runs .ts directly through tsx and has no build step. This config
+  // exists only for the .mcpb bundle, whose manifest must point at a JavaScript
+  // entry_point: an MCPB host runs `node <entry_point>` with no toolchain of its
+  // own. tsconfig.json stays the typecheck config and still covers tests + smoke.
+  "extends": "./tsconfig.json",
+  "include": ["index.ts", "server.ts"],
+  "exclude": ["node_modules", "dist", "build", "test", "smoke.ts"]
+}

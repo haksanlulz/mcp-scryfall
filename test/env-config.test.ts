@@ -119,6 +119,31 @@ describe("env knob parsing", () => {
     });
   }
 
+  // SCRYFALL_CONTACT is the one knob the .mcpb bundle exposes as a user_config
+  // field, so these pin both ends of what that install produces.
+  it("puts SCRYFALL_CONTACT into the User-Agent", async () => {
+    const fetchMock = mockFetch({ object: "card", name: "Black Lotus" });
+    vi.stubGlobal("fetch", fetchMock);
+    const { client } = await load({ SCRYFALL_CONTACT: "someone@example.invalid" });
+    await client.callTool({ name: "card_named", arguments: { name: "Black Lotus" } });
+    const ua = (fetchMock.mock.calls[0][1] as any).headers["User-Agent"];
+    expect(ua).toMatch(/^mcp-scryfall\//);
+    expect(ua).toContain("someone@example.invalid");
+  });
+
+  it("falls back to the repository URL when SCRYFALL_CONTACT is empty", async () => {
+    // The bundle's user_config field is optional, so an install where the user
+    // leaves it blank substitutes an empty string rather than omitting the
+    // variable -- which is why the fallback in server.ts is `||` and not `??`.
+    // Without it the User-Agent would end in "()" and identify nobody.
+    const fetchMock = mockFetch({ object: "card", name: "Black Lotus" });
+    vi.stubGlobal("fetch", fetchMock);
+    const { client } = await load({ SCRYFALL_CONTACT: "" });
+    await client.callTool({ name: "card_named", arguments: { name: "Black Lotus" } });
+    const ua = (fetchMock.mock.calls[0][1] as any).headers["User-Agent"];
+    expect(ua).toContain("github.com/haksanlulz/mcp-scryfall");
+  });
+
   it("uses a valid SCRYFALL_MAX_ATTEMPTS as given", async () => {
     const down = mockFetch(
       { object: "error", status: 503, details: "upstream unavailable" },

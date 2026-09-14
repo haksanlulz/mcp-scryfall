@@ -24,8 +24,9 @@ jobs:
         # package.json declares engines >=18, but the DEV toolchain floor is
         # higher than the runtime floor: vitest pulls a vite that requires
         # ^20.19 || >=22.12, so `npm ci` cannot install on 18 here. The server
-        # itself runs under tsx and has no build step, so there is no tarball
-        # stage to prove the lower bound against.
+        # itself runs under tsx, and the one build that exists (the .mcpb bundle,
+        # below) is built on this same matrix -- so nothing proves 18, and the
+        # bundle's manifest says >=20 for that reason.
         node: ["20", "22"]
     steps:
       - uses: actions/checkout@v4
@@ -40,3 +41,24 @@ jobs:
       # on a third party's uptime and would spend their rate limit for no
       # signal the mocked suite does not already give. Smoke stays a local rung.
       - run: npm test
+
+  # The .mcpb bundle is a SECOND shipping path: its manifest points at emitted
+  # JavaScript that a host runs with `node`, while every other rung drives the
+  # TypeScript through tsx. Nothing else here would notice that path breaking --
+  # the comment above about "no build step" stopped being true when the bundle
+  # landed. This packs it and then drives the PACKED artifact over stdio.
+  # Offline: the probe is initialize + tools/list, with no Scryfall call.
+  bundle:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["20", "22"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run bundle
