@@ -242,6 +242,12 @@ async function upstream(
   try {
     const res = await fetch(`${SCRYFALL}${path}`, {
       headers: { "User-Agent": UA, Accept: "application/json" },
+      // Bounded like phase 1's rpc (30 s) and like the server's own requests
+      // (15 s). Without it a stalled connection sits on undici's 300 s default
+      // -- five endpoints, so up to 25 minutes with no verdict and no exit code,
+      // in the one phase whose point is that it can record a FAIL. The catch
+      // below turns the abort into that FAIL.
+      signal: AbortSignal.timeout(15_000),
     });
     const raw = await res.text();
     let json: any;
