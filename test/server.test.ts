@@ -191,6 +191,16 @@ describe("mcp-scryfall server", () => {
     expect(body.data[0].rarity).toBeUndefined();
   });
 
+  it("rejects an unknown argument with a near-miss before any request", async () => {
+    const fetchMock = mockFetch({ object: "list", total_cards: 0, data: [] });
+    vi.stubGlobal("fetch", fetchMock);
+    const client = await connect();
+    await expect(
+      client.callTool({ name: "card_search", arguments: { q: "t:goblin", ful: true } }),
+    ).rejects.toThrow(/card_search does not accept "ful" \(did you mean "full"\?\)/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("card_search rejects a non-boolean full before any request", async () => {
     const fetchMock = mockFetch({ object: "list", total_cards: 0, data: [] });
     vi.stubGlobal("fetch", fetchMock);
