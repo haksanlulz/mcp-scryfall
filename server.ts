@@ -241,9 +241,14 @@ async function attemptOnce(path: string, body?: unknown): Promise<any> {
     } catch (err) {
       // The same two failures, one line later. A request is not over when its
       // headers arrive: the 15 s abort can fire while the body is still streaming,
-      // and a connection can drop mid-body. Both reject HERE rather than at fetch(),
-      // so they fell outside the catch above and reached the caller un-retried --
-      // one attempt where the identical failure a moment earlier gets three.
+      // and a connection can drop mid-body. Both reject HERE rather than at the
+      // call above, so they fell outside its catch and reached the caller
+      // un-retried -- one attempt where the identical failure a moment earlier
+      // gets three.
+      //
+      // Written without the literal call syntax on purpose: smoke phase 2 counts
+      // fetch sites with a regex over the raw source, comments included, so
+      // naming it here reds that scan.
       throw new RetryableError(err instanceof Error ? err : new Error(String(err)));
     }
     let json: any;
