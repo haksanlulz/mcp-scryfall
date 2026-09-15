@@ -108,7 +108,13 @@ describe("env knob parsing", () => {
       const down = mockFetch(
         { object: "error", status: 503, details: "upstream unavailable" },
         503,
-        { "retry-after": "0" }, // keep the backoff free; the cap is what is under test
+        // `Retry-After: 0` no longer skips the backoff: it is floored at the step
+        // it replaced, so these three cases and the ceiling case below each wait
+        // 250 ms + 1000 ms of REAL time -- ~1.27 s apiece, measured, and 5.1 s of
+        // this file's 5.7 s. The attempt CAP is what is under test, not the wait.
+        // Fake timers are not the fix here; retry-timing.test.ts explains why
+        // fake-clock tests are quarantined to their own file.
+        { "retry-after": "0" },
       );
       vi.stubGlobal("fetch", down);
       const { client } = await load({ SCRYFALL_MAX_ATTEMPTS: bad });
