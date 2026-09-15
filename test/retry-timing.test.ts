@@ -41,10 +41,20 @@ const DOWN = { object: "error", status: 503, details: "upstream down" };
  * Install the fake clock ten minutes ahead of wherever it is now, so the rate
  * limiter sees plenty of elapsed time and adds no pacing wait of its own — no
  * matter how far a previous test in this file advanced it.
+ *
+ * `Date.now()` here reads the REAL clock (useFakeTimers seeds from it), which
+ * barely moves between tests, so the ten minutes has to be stacked on the highest
+ * base handed out so far rather than on real time alone. Otherwise a test that
+ * advanced its fake clock 20 s leaves `lastCall` ahead of the NEXT test's start
+ * time, and that test opens with a pacing wait of everything in between — which is
+ * how far each call's last request now sits from its first, since the pacer moved
+ * from once-per-call to once-per-request.
  */
+let clockBase = 0;
 function startClock(): void {
   vi.useFakeTimers();
-  vi.setSystemTime(Date.now() + 10 * 60_000);
+  clockBase = Math.max(Date.now(), clockBase) + 10 * 60_000;
+  vi.setSystemTime(clockBase);
 }
 
 /** Past every backoff in this file, and under the MCP client's 60 s request
@@ -153,6 +163,40 @@ describe("Retry-After", () => {
     expect(at).toHaveLength(3);
     expect(at[1] - at[0]).toBe(250);
     expect(at[2] - at[1]).toBe(1000);
+  });
+});
+
+describe("pacing across calls", () => {
+  it("paces the next call from the retry, not from the first attempt of the one before", async () => {
+    // The 100 ms delay used to be stamped once per TOOL CALL, in rateLimited, while
+    // a retried call issues several requests. Call A's second attempt left the
+    // timestamp at A's first attempt, so queued call B computed its elapsed time
+    // from a request two backoffs old, saw "well past 100 ms" and fired ~1 ms after
+    // A's retry -- immediately after Scryfall had said slow down.
+    const client = await connect();
+    startClock();
+    const at: number[] = [];
+    let n = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        at.push(Date.now());
+        return ++n === 1
+          ? res({ object: "error", status: 429, details: "slow down" }, 429, {
+              "retry-after": "0",
+            })
+          : res({ object: "card", name: n === 2 ? "Card P1" : "Card P2" }, 200);
+      }),
+    );
+    // Both in flight at once: B is queued behind A, which is the case the limiter
+    // exists for. Different card names, so B is not served from A's cache entry.
+    const a = client.callTool({ name: "card_named", arguments: { name: "Card P1" } });
+    const b = client.callTool({ name: "card_named", arguments: { name: "Card P2" } });
+    await vi.advanceTimersByTimeAsync(RUN_MS);
+    await Promise.all([a, b]);
+    expect(at).toHaveLength(3);
+    expect(at[1] - at[0]).toBe(250); // A's own backoff, unchanged
+    expect(at[2] - at[1]).toBe(100); // B paced from A's LAST request, not its first
   });
 });
 

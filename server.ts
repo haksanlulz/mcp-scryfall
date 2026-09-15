@@ -13,7 +13,13 @@ const UA = `mcp-scryfall/1.1 (${CONTACT})`;
 const DELAY_MS = 100;
 
 // serialize through one chain: the SDK dispatches handlers concurrently, so a
-// bare timestamp check would let parallel calls fire together and breach the delay
+// bare timestamp check would let parallel calls fire together and breach the delay.
+//
+// `lastCall` is stamped by attemptOnce, at the fetch itself, NOT here. Stamping it
+// here counted one tool call as one request, and a tool call can issue several: a
+// retried call's second and third fetches left the timestamp sitting at the first
+// attempt, so the next queued call read that stale gap as "well past 100 ms" and
+// fired ~1 ms behind the retry -- on the 429 path, where the etiquette matters most.
 let lastCall = 0;
 let queue: Promise<unknown> = Promise.resolve();
 function rateLimited<T>(fn: () => Promise<T>): Promise<T> {
@@ -22,7 +28,6 @@ function rateLimited<T>(fn: () => Promise<T>): Promise<T> {
     if (elapsed < DELAY_MS) {
       await new Promise((r) => setTimeout(r, DELAY_MS - elapsed));
     }
-    lastCall = Date.now();
     return fn();
   });
   queue = run.then(
@@ -206,6 +211,13 @@ async function attemptOnce(path: string, body?: unknown): Promise<any> {
   {
     let res: Response;
     try {
+      // Every ACTUAL request advances the pacer, not just the first attempt of a
+      // call. The gap Scryfall's guidelines ask for is between requests, and a
+      // retry is a request: stamping once per scryfallRequest left a retry issued
+      // 250 ms later invisible to the limiter, so the NEXT call fired ~1 ms after
+      // it. Retries run inside the serialized queue, so nothing else can be
+      // between this stamp and this fetch.
+      lastCall = Date.now();
       res = await fetch(`${SCRYFALL}${path}`, {
         method: body === undefined ? "GET" : "POST",
         headers: {
