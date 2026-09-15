@@ -355,6 +355,13 @@ function optionalBoolean(tool: string, field: string, raw: unknown): boolean {
   if (typeof raw === "boolean") return raw;
   if (raw === "true") return true;
   if (raw === "false") return false;
+  // Blank means absent -- the rule optionalString already applies, extended to the
+  // other two helpers that read an optional argument. The client behaviour that rule
+  // exists for (fill every declared property, blank the ones you have no value for)
+  // does not consult the declared TYPE before blanking, so the boolean and number
+  // fields receive "" exactly as the string fields do. Rejecting it turned an
+  // omitted argument into a failed call.
+  if (typeof raw === "string" && raw.trim() === "") return false;
   throw new Error(
     `${tool} requires ${field} to be a boolean when given — got ${JSON.stringify(raw)}`,
   );
@@ -375,6 +382,9 @@ function optionalBoolean(tool: string, field: string, raw: unknown): boolean {
 // for it -- against a schema that declares `page` a number.
 function resolvePage(raw: unknown): number {
   if (raw === undefined || raw === null) return 1;
+  // Blank means absent, as above: page 1 is what "no page given" means, and
+  // Number("") is 0, which would otherwise fail the >= 1 check below.
+  if (typeof raw === "string" && raw.trim() === "") return 1;
   const n =
     typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw.trim()) : NaN;
   if (!Number.isInteger(n) || n < 1) {

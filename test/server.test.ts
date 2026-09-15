@@ -702,6 +702,62 @@ describe("mcp-scryfall server", () => {
     expect(bodyOf(res).data[0].comment).toBe("a ruling");
   });
 
+  // Blank-means-absent reached only the STRING helper. A client that fills every
+  // declared property does not consult the declared type before blanking the ones
+  // it has no value for, so the number and boolean fields get "" too -- and both
+  // rejected it, failing a call whose argument was meaningfully omitted.
+  it("treats a blank page as page 1, in the URL and in the echo together", async () => {
+    const fetchMock = mockFetch({ object: "list", total_cards: 1, has_more: false, data: [] });
+    vi.stubGlobal("fetch", fetchMock);
+    const client = await connect();
+    const res = await client.callTool({
+      name: "card_search",
+      arguments: { q: "t:goblin", page: "" },
+    });
+    expect(String(fetchMock.mock.calls[0][0])).toContain("&page=1");
+    expect(bodyOf(res).page).toBe(1);
+  });
+
+  it("treats a blank full on card_search as false, so summaries still come back", async () => {
+    const fetchMock = mockFetch({
+      object: "list",
+      total_cards: 1,
+      has_more: false,
+      data: [{ object: "card", name: "Goblin Guide", mana_cost: "{R}" }],
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const client = await connect();
+    const res = await client.callTool({
+      name: "card_search",
+      arguments: { q: "t:goblin", full: "" },
+    });
+    const body = bodyOf(res);
+    // the summary envelope, not the raw Scryfall list full:true would have returned
+    expect(body.total_cards).toBe(1);
+    expect(body.data[0].name).toBe("Goblin Guide");
+    expect(body.data[0].object).toBeUndefined();
+  });
+
+  it("treats a blank full on card_collection as false", async () => {
+    const fetchMock = mockFetch({
+      object: "list",
+      data: [{ object: "card", name: "Sol Ring", mana_cost: "{1}" }],
+      not_found: [],
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const client = await connect();
+    const res = await client.callTool({
+      name: "card_collection",
+      arguments: { identifiers: ["Sol Ring"], full: "" },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const body = bodyOf(res);
+    expect(body.found).toBe(1);
+    // summarized, not the raw card object full:true would have returned
+    expect(body.data[0].name).toBe("Sol Ring");
+    expect(body.data[0].object).toBeUndefined();
+  });
+
   it("throws with Scryfall's detail on a 429 rate-limit error", async () => {
     vi.stubGlobal(
       "fetch",
