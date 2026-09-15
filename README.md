@@ -59,6 +59,8 @@ The three numeric ones are parsed once at load. A value that is not an integer, 
 
 `SCRYFALL_MAX_ATTEMPTS` is the only one with a ceiling, because it is the only one whose too-large direction is the dangerous one: retries wait inside the same serialized queue, and each wait can be a honoured `Retry-After` of up to 10 s, so a mistyped `3000` holds every later tool call in the process behind one failing request. It is rejected rather than clamped — a value that is bad only in magnitude gets the same notice as one that is bad in form.
 
+The ceiling bounds each wait, not the total, so the total is worth knowing before raising it. Against an upstream that answers nothing usefully, one call holds the queue for up to `(attempts - 1) x 10 s` of honoured `Retry-After` plus `attempts x 15 s` of request timeout: up to 65 s at the default 3, up to 240 s at the ceiling of 10. The MCP SDK's own default request timeout is 60 s (`DEFAULT_REQUEST_TIMEOUT_MSEC`), so even the default can outlast the client that asked — the client gives up while this process is still holding every later call behind the dead one. Raise it only if your client waits longer than that.
+
 ## Install as a bundle (.mcpb)
 
 ```bash
