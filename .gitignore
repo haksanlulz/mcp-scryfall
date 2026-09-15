@@ -7,3 +7,6 @@ dist/
 .DS_Store
 build/
 *.mcpb
+# a mutation probe backs up the file it is about to edit; a stray copy of server.ts
+# is one `git add -A` from the published history, and nothing reads it
+*.bak
