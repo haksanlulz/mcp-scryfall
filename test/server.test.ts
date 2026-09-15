@@ -933,4 +933,62 @@ describe("transient-failure retry", () => {
       .rejects.toThrow(/upstream unavailable/);
     expect(down).toHaveBeenCalledTimes(3);
   });
+
+  // Every abort case above rejects AT fetch(). A request is not over when its
+  // headers arrive: the 15 s timeout can fire while the body is still streaming,
+  // and a connection can drop mid-body. Both reject at res.text() instead, one
+  // line past the catch that classifies a failure as retryable -- so the same
+  // failure got one attempt here and three a moment earlier. The call count is
+  // the whole assertion: it is what tells retried from not-retried.
+  it("retries a body that dies mid-read, not just a fetch that never connected", async () => {
+    const dyingBody = vi.fn(async () => {
+      const res = new Response("", {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+      Object.defineProperty(res, "text", {
+        value: async () => {
+          throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+        },
+      });
+      return res;
+    });
+    vi.stubGlobal("fetch", dyingBody);
+    const client = await connect();
+    await expect(
+      client.callTool({ name: "card_named", arguments: { name: "X" } }),
+    ).rejects.toThrow(/aborted due to timeout/);
+    expect(dyingBody).toHaveBeenCalledTimes(3);
+  });
+
+  it("recovers when only the FIRST body read dies", async () => {
+    // The other half: retrying is only worth doing if the retry can succeed.
+    const flaky = vi
+      .fn(async () =>
+        new Response(JSON.stringify({ object: "card", name: "Sol Ring" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      )
+      .mockImplementationOnce(async () => {
+        const res = new Response("", {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+        Object.defineProperty(res, "text", {
+          value: async () => {
+            throw new TypeError("terminated");
+          },
+        });
+        return res;
+      });
+    vi.stubGlobal("fetch", flaky);
+    const client = await connect();
+    const res = await client.callTool({
+      name: "card_named",
+      arguments: { name: "Sol Ring" },
+    });
+    expect(bodyOf(res).name).toBe("Sol Ring");
+    expect(flaky).toHaveBeenCalledTimes(2);
+  });
 });

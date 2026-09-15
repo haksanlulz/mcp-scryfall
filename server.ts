@@ -235,7 +235,17 @@ async function attemptOnce(path: string, body?: unknown): Promise<any> {
       // more try rather than surfacing as a hard failure to the model.
       throw new RetryableError(err instanceof Error ? err : new Error(String(err)));
     }
-    const raw = await res.text();
+    let raw: string;
+    try {
+      raw = await res.text();
+    } catch (err) {
+      // The same two failures, one line later. A request is not over when its
+      // headers arrive: the 15 s abort can fire while the body is still streaming,
+      // and a connection can drop mid-body. Both reject HERE rather than at fetch(),
+      // so they fell outside the catch above and reached the caller un-retried --
+      // one attempt where the identical failure a moment earlier gets three.
+      throw new RetryableError(err instanceof Error ? err : new Error(String(err)));
+    }
     let json: any;
     try {
       json = JSON.parse(raw);
