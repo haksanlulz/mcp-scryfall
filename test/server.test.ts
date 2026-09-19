@@ -74,6 +74,41 @@ describe("mcp-scryfall server", () => {
     expect(bodyOf(res).set).toBe("2x2");
   });
 
+  // A /cards/named hit is ONE printing (the most recent unless `set` was
+  // given), and the raw object says so only through `reprint: true` sitting
+  // next to `set_name`. A 30B local model driving this server through mcp-chat
+  // read "set_name: Marvel Super Heroes Commander" as where Lightning Bolt
+  // debuted (2026-09-19, operator-caught). The fix belongs here: every single-
+  // card result carries a plain-prose `record_scope` that says what the set
+  // field means, so no client has to know Scryfall's data model to read it.
+  it("RED LEG: a reprint printing says so in record_scope, naming the printing, not the origin", async () => {
+    vi.stubGlobal("fetch", mockFetch({
+      object: "card", name: "Lightning Bolt", set: "msc", set_name: "Marvel Super Heroes Commander",
+      released_at: "2026-06-26", reprint: true,
+    }));
+    const client = await connect();
+    const res = await client.callTool({ name: "card_named", arguments: { name: "Lightning Bolt" } });
+    const body = bodyOf(res);
+    expect(body.name).toBe("Lightning Bolt");
+    expect(body.record_scope).toMatch(/one printing/i);
+    expect(body.record_scope).toMatch(/reprint/i);
+    expect(body.record_scope).toMatch(/not (the card's|its) (first|original)/i);
+    expect(body.record_scope).toContain("Marvel Super Heroes Commander");
+  });
+
+  it("a first printing says so, and card_fuzzy carries the same scope", async () => {
+    vi.stubGlobal("fetch", mockFetch({
+      object: "card", name: "Black Lotus", set: "lea", set_name: "Limited Edition Alpha",
+      released_at: "1993-08-05", reprint: false,
+    }));
+    const client = await connect();
+    const named = bodyOf(await client.callTool({ name: "card_named", arguments: { name: "Black Lotus" } }));
+    expect(named.record_scope).toMatch(/first printing/i);
+    expect(named.record_scope).not.toMatch(/is a reprint|not the card's first/i);
+    const fuzzy = bodyOf(await client.callTool({ name: "card_fuzzy", arguments: { name: "blak lotus" } }));
+    expect(fuzzy.record_scope).toBe(named.record_scope);
+  });
+
   it("card_fuzzy builds the fuzzy-name URL and returns the card", async () => {
     const fetchMock = mockFetch({ object: "card", name: "Jace Beleren" });
     vi.stubGlobal("fetch", fetchMock);

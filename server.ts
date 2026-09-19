@@ -418,6 +418,22 @@ function asText(value: unknown) {
   return { content: [{ type: "text", text: JSON.stringify(value, null, 2) }] };
 }
 
+// A /cards/named hit is ONE printing — the most recent unless `set` was given —
+// and the raw object only says so through `reprint: true` next to `set_name`.
+// That is enough for a reader who knows Scryfall's data model and not for one
+// who does not: a local model driving this server through a chat UI read
+// "set_name: Marvel Super Heroes Commander" as where Lightning Bolt debuted
+// (2026-09-19). So every single-card result carries a plain-prose record_scope
+// saying what its set field means, the way the civic servers scope theirs.
+function withPrintingScope(card: any) {
+  if (!card || typeof card !== "object" || card.object !== "card") return card;
+  const where = card.set_name ? `${card.set_name} (${card.set ?? "?"}${card.released_at ? `, ${card.released_at}` : ""})` : "an unnamed set";
+  const scope = card.reprint === true
+    ? `One printing of this card: ${where}. It is a reprint, so this is not the card's first printing and the set here is not its origin; card_search with the name and unique:prints lists every printing.`
+    : `One printing of this card: ${where}. Scryfall marks it as the card's first printing (reprint is false).`;
+  return { ...card, record_scope: scope };
+}
+
 
 // ---------------------------------------------------------------------------
 // Unknown-argument guard. The low-level SDK Server hands the arguments object
@@ -482,7 +498,7 @@ const TOOLS = [
   {
     name: "card_named",
     description:
-      "Exact-name lookup of a Magic card. Returns the full Scryfall card object (oracle_text, mana_cost, type_line, P/T, legalities, etc.) on a hit. A miss (no card by that exact name) surfaces as an error carrying Scryfall's details; try card_fuzzy instead. Use when the caller has the exact card name.",
+      "Exact-name lookup of a Magic card. Returns the full Scryfall card object (oracle_text, mana_cost, type_line, P/T, legalities, etc.) on a hit, plus a record_scope line. The object is ONE printing — the most recent unless `set` is given — so `set`/`set_name`/`released_at` describe that printing, not where the card first appeared; `reprint: true` means it debuted earlier, and record_scope says so in words. A miss (no card by that exact name) surfaces as an error carrying Scryfall's details; try card_fuzzy instead. Use when the caller has the exact card name.",
     inputSchema: {
       type: "object",
       properties: {
@@ -498,7 +514,7 @@ const TOOLS = [
   {
     name: "card_fuzzy",
     description:
-      "Fuzzy-name lookup of a Magic card. Handles typos, partial names, and alternate spellings. Returns the full card object; no close match surfaces as an error carrying Scryfall's details. Use when the caller's spelling may be wrong or incomplete.",
+      "Fuzzy-name lookup of a Magic card. Handles typos, partial names, and alternate spellings. Returns the full card object for ONE printing (the most recent) plus the same record_scope line as card_named — the set fields are that printing's, not the card's origin. No close match surfaces as an error carrying Scryfall's details. Use when the caller's spelling may be wrong or incomplete.",
     inputSchema: {
       type: "object",
       properties: {
@@ -617,11 +633,11 @@ export function createServer(): Server {
         const set = optionalString("card_named", "set", args.set);
         let path = `/cards/named?exact=${n}`;
         if (set) path += `&set=${encodeURIComponent(set)}`;
-        return asText(await scryfallRequest(path));
+        return asText(withPrintingScope(await scryfallRequest(path)));
       }
       case "card_fuzzy": {
         const n = encodeURIComponent(requiredString("card_fuzzy", "name", args.name));
-        return asText(await scryfallRequest(`/cards/named?fuzzy=${n}`));
+        return asText(withPrintingScope(await scryfallRequest(`/cards/named?fuzzy=${n}`)));
       }
       case "card_search": {
         const q = encodeURIComponent(requiredString("card_search", "q", args.q));
