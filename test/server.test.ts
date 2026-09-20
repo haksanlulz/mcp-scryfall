@@ -96,6 +96,52 @@ describe("mcp-scryfall server", () => {
     expect(body.record_scope).toContain("Marvel Super Heroes Commander");
   });
 
+  // The scope line told the reader to go run card_search for the printings.
+  // Operator, 2026-09-20: "the scryfall output should show all sets something
+  // is part of". So a single-card hit fetches its own printings (Scryfall's
+  // prints_search_uri, oldest first) and carries them inline: a compact row
+  // per printing, first_printing pulled out, and the scope sentence cites it.
+  it("RED LEG: a single-card hit carries every printing, oldest first, and names the first one", async () => {
+    const hit = { object: "card", name: "Lightning Bolt", oracle_id: "4457", set: "msc", set_name: "Marvel Super Heroes Commander", released_at: "2026-06-26", reprint: true,
+      prints_search_uri: "https://api.scryfall.com/cards/search?order=released&q=oracleid%3A4457&unique=prints" };
+    const prints = { object: "list", total_cards: 3, has_more: false, data: [
+      { object: "card", set: "lea", set_name: "Limited Edition Alpha", released_at: "1993-08-05", rarity: "common", collector_number: "161", digital: false },
+      { object: "card", set: "m10", set_name: "Magic 2010", released_at: "2009-07-17", rarity: "common", collector_number: "146", digital: false },
+      { object: "card", set: "msc", set_name: "Marvel Super Heroes Commander", released_at: "2026-06-26", rarity: "uncommon", collector_number: "806", digital: false },
+    ] };
+    const fetchMock = vi.fn(async (url: any) => new Response(JSON.stringify(String(url).includes("unique=prints") ? prints : hit), { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = await connect();
+    const body = bodyOf(await client.callTool({ name: "card_named", arguments: { name: "Lightning Bolt" } }));
+    expect(body.printings).toEqual([
+      { set: "lea", set_name: "Limited Edition Alpha", released_at: "1993-08-05", rarity: "common", collector_number: "161" },
+      { set: "m10", set_name: "Magic 2010", released_at: "2009-07-17", rarity: "common", collector_number: "146" },
+      { set: "msc", set_name: "Marvel Super Heroes Commander", released_at: "2026-06-26", rarity: "uncommon", collector_number: "806" },
+    ]);
+    expect(body.printings_count).toBe(3);
+    expect(body.first_printing).toEqual({ set: "lea", set_name: "Limited Edition Alpha", released_at: "1993-08-05" });
+    expect(body.record_scope).toMatch(/first printed in Limited Edition Alpha \(lea, 1993-08-05\)/);
+    expect(body.record_scope).toMatch(/3 printings/);
+    // the printings request asked Scryfall for oldest-first, and the SAME oracle id
+    const printsUrl = String(fetchMock.mock.calls.map((c: any) => c[0]).find((u: any) => String(u).includes("unique=prints")));
+    expect(printsUrl).toContain("oracleid%3A4457");
+    expect(printsUrl).toMatch(/order=released/);
+    expect(printsUrl).toMatch(/dir=asc/);
+  });
+
+  it("a printings fetch that fails leaves the card intact and says the list is unavailable", async () => {
+    const hit = { object: "card", name: "Black Lotus", oracle_id: "abc", set: "lea", set_name: "Limited Edition Alpha", released_at: "1993-08-05", reprint: false,
+      prints_search_uri: "https://api.scryfall.com/cards/search?order=released&q=oracleid%3Aabc&unique=prints" };
+    vi.stubGlobal("fetch", vi.fn(async (url: any) => String(url).includes("unique=prints")
+      ? new Response("upstream down", { status: 503 })
+      : new Response(JSON.stringify(hit), { status: 200, headers: { "content-type": "application/json" } })));
+    const client = await connect();
+    const body = bodyOf(await client.callTool({ name: "card_named", arguments: { name: "Black Lotus" } }));
+    expect(body.name).toBe("Black Lotus");
+    expect(body.printings).toBeUndefined();
+    expect(body.record_scope).toMatch(/printings list could not be fetched/);
+  });
+
   it("a first printing says so, and card_fuzzy carries the same scope", async () => {
     vi.stubGlobal("fetch", mockFetch({
       object: "card", name: "Black Lotus", set: "lea", set_name: "Limited Edition Alpha",

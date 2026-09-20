@@ -8,8 +8,8 @@ LLMs misremember card names, costs, and rules text. This looks them up on live S
 
 | Tool | What it does |
 |------|--------------|
-| `card_named` | Exact-name lookup (optional set code). Full card object for **one printing** (the most recent unless `set` is given) plus a `record_scope` sentence saying so — `set`/`set_name`/`released_at` are that printing's, and `reprint: true` means the card debuted earlier. |
-| `card_fuzzy` | Fuzzy-name lookup. Handles typos and partial names. Same one-printing object and `record_scope` as `card_named`. |
+| `card_named` | Exact-name lookup (optional set code). Full card object for **one printing** (the most recent unless `set` is given), plus `printings` — every printing oldest first (set, set_name, released_at, rarity, collector_number), `printings_count`, `first_printing` — and a `record_scope` sentence saying which printing the object is and where the card debuted. One extra Scryfall request per lookup, cached. |
+| `card_fuzzy` | Fuzzy-name lookup. Handles typos and partial names. Same one-printing object, `printings` list and `record_scope` as `card_named`. |
 | `card_search` | [Scryfall query-syntax](https://scryfall.com/docs/syntax) search. Returns compact summaries by default (pass `full: true` for raw objects). A query matching no cards is an error, not an empty list — Scryfall answers a zero-result search with a 404. |
 | `card_collection` | Batch lookup (`POST /cards/collection`) — resolve a whole decklist in one call. Takes exact-name strings and/or `{name}` / `{id}` / `{name, set}` / `{set, collector_number}` identifiers; misses come back in `not_found`. |
 | `card_random` | A random card, optionally filtered by a query. |

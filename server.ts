@@ -425,13 +425,59 @@ function asText(value: unknown) {
 // "set_name: Marvel Super Heroes Commander" as where Lightning Bolt debuted
 // (2026-09-19). So every single-card result carries a plain-prose record_scope
 // saying what its set field means, the way the civic servers scope theirs.
-function withPrintingScope(card: any) {
+//
+// And the printings themselves (2026-09-20, operator: "the scryfall output
+// should show all sets something is part of"): telling a reader to go run
+// card_search for them is an instruction where a list would be an answer. One
+// extra request per lookup — Scryfall's own prints search for the oracle id,
+// oldest first — cached like everything else. The list is compact (set, name,
+// date, rarity, collector number) so 77 printings of Lightning Bolt cost a
+// few KB, not the 77 full objects. Bounded at one page (175); more than that
+// says so rather than paging.
+const PRINTING_ROW = (c: any) => ({
+  set: c.set ?? null,
+  set_name: c.set_name ?? null,
+  released_at: c.released_at ?? null,
+  rarity: c.rarity ?? null,
+  collector_number: c.collector_number ?? null,
+});
+
+async function withPrintingScope(card: any): Promise<any> {
   if (!card || typeof card !== "object" || card.object !== "card") return card;
   const where = card.set_name ? `${card.set_name} (${card.set ?? "?"}${card.released_at ? `, ${card.released_at}` : ""})` : "an unnamed set";
-  const scope = card.reprint === true
-    ? `One printing of this card: ${where}. It is a reprint, so this is not the card's first printing and the set here is not its origin; card_search with the name and unique:prints lists every printing.`
+  const lead = card.reprint === true
+    ? `One printing of this card: ${where}. It is a reprint, so this is not the card's first printing and the set here is not its origin.`
     : `One printing of this card: ${where}. Scryfall marks it as the card's first printing (reprint is false).`;
-  return { ...card, record_scope: scope };
+
+  let printings: any[] | undefined;
+  let total: number | undefined;
+  if (typeof card.oracle_id === "string" && card.oracle_id) {
+    try {
+      const q = encodeURIComponent(`oracleid:${card.oracle_id}`);
+      const list: any = await scryfallRequest(`/cards/search?order=released&dir=asc&unique=prints&q=${q}`);
+      if (list && Array.isArray(list.data)) {
+        printings = list.data.map(PRINTING_ROW);
+        total = typeof list.total_cards === "number" ? list.total_cards : printings!.length;
+      }
+    } catch {
+      // the card is the answer; the list is a courtesy — say it is missing rather than fail the lookup
+    }
+  }
+
+  if (!printings) {
+    return { ...card, record_scope: `${lead} The printings list could not be fetched; card_search with the name and unique:prints lists every printing.` };
+  }
+  const first = printings[0];
+  const firstText = first ? `first printed in ${first.set_name ?? "?"} (${first.set ?? "?"}, ${first.released_at ?? "?"})` : "first printing unknown";
+  const more = total !== undefined && total > printings.length ? ` (${printings.length} of ${total} listed)` : "";
+  return {
+    ...card,
+    printings,
+    printings_count: total ?? printings.length,
+    ...(total !== undefined && total > printings.length ? { printings_truncated: true } : {}),
+    first_printing: first ? { set: first.set, set_name: first.set_name, released_at: first.released_at } : null,
+    record_scope: `${lead} The card was ${firstText} and has ${total ?? printings.length} printings${more}, listed oldest first in \`printings\`.`,
+  };
 }
 
 
@@ -498,7 +544,7 @@ const TOOLS = [
   {
     name: "card_named",
     description:
-      "Exact-name lookup of a Magic card. Returns the full Scryfall card object (oracle_text, mana_cost, type_line, P/T, legalities, etc.) on a hit, plus a record_scope line. The object is ONE printing — the most recent unless `set` is given — so `set`/`set_name`/`released_at` describe that printing, not where the card first appeared; `reprint: true` means it debuted earlier, and record_scope says so in words. A miss (no card by that exact name) surfaces as an error carrying Scryfall's details; try card_fuzzy instead. Use when the caller has the exact card name.",
+      "Exact-name lookup of a Magic card. Returns the full Scryfall card object (oracle_text, mana_cost, type_line, P/T, legalities, etc.) on a hit, plus a record_scope line. The object is ONE printing — the most recent unless `set` is given — so `set`/`set_name`/`released_at` describe that printing, not where the card first appeared; `reprint: true` means it debuted earlier. The response also carries `printings` (every printing, oldest first: set, set_name, released_at, rarity, collector_number), `printings_count` and `first_printing`, and record_scope says all of this in words. A miss (no card by that exact name) surfaces as an error carrying Scryfall's details; try card_fuzzy instead. Use when the caller has the exact card name.",
     inputSchema: {
       type: "object",
       properties: {
@@ -514,7 +560,7 @@ const TOOLS = [
   {
     name: "card_fuzzy",
     description:
-      "Fuzzy-name lookup of a Magic card. Handles typos, partial names, and alternate spellings. Returns the full card object for ONE printing (the most recent) plus the same record_scope line as card_named — the set fields are that printing's, not the card's origin. No close match surfaces as an error carrying Scryfall's details. Use when the caller's spelling may be wrong or incomplete.",
+      "Fuzzy-name lookup of a Magic card. Handles typos, partial names, and alternate spellings. Returns the full card object for ONE printing (the most recent) plus the same `printings` list, `first_printing` and record_scope as card_named — the set fields are that printing's, not the card's origin. No close match surfaces as an error carrying Scryfall's details. Use when the caller's spelling may be wrong or incomplete.",
     inputSchema: {
       type: "object",
       properties: {
@@ -633,11 +679,11 @@ export function createServer(): Server {
         const set = optionalString("card_named", "set", args.set);
         let path = `/cards/named?exact=${n}`;
         if (set) path += `&set=${encodeURIComponent(set)}`;
-        return asText(withPrintingScope(await scryfallRequest(path)));
+        return asText(await withPrintingScope(await scryfallRequest(path)));
       }
       case "card_fuzzy": {
         const n = encodeURIComponent(requiredString("card_fuzzy", "name", args.name));
-        return asText(withPrintingScope(await scryfallRequest(`/cards/named?fuzzy=${n}`)));
+        return asText(await withPrintingScope(await scryfallRequest(`/cards/named?fuzzy=${n}`)));
       }
       case "card_search": {
         const q = encodeURIComponent(requiredString("card_search", "q", args.q));
