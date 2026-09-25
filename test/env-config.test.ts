@@ -137,6 +137,50 @@ describe("env knob parsing", () => {
     expect(ua).toContain("someone@example.invalid");
   });
 
+  // SCRYFALL_CONTACT is free text typed into an install dialog, and it lands in a
+  // header. The real fetch (undici) refuses a header value holding CR, LF or NUL,
+  // so a pasted line break would make every request throw. The mock below builds
+  // a real Headers object from the request so it fails the way undici does.
+  function headerCheckingFetch() {
+    return vi.fn(async (_url?: any, init?: any) => {
+      new Headers(init?.headers);
+      return new Response(JSON.stringify({ object: "card", name: "Black Lotus" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+  }
+
+  it("rejects a SCRYFALL_CONTACT holding a control character and falls back", async () => {
+    const fetchMock = headerCheckingFetch();
+    vi.stubGlobal("fetch", fetchMock);
+    const { client } = await load({ SCRYFALL_CONTACT: "me@example.invalid\nX-Injected: 1" });
+    const res: any = await client.callTool({
+      name: "card_named",
+      arguments: { name: "Black Lotus" },
+    });
+    expect(res.isError).toBeFalsy();
+    const ua = (fetchMock.mock.calls[0][1] as any).headers["User-Agent"];
+    expect(ua).toContain("github.com/haksanlulz/mcp-scryfall");
+    expect(ua).not.toMatch(/[^\x20-\x7e]/);
+    expect(logged.mock.calls.map((c: any[]) => String(c[0])).join("\n")).toMatch(
+      /ignoring SCRYFALL_CONTACT/,
+    );
+  });
+
+  it("rejects an over-long SCRYFALL_CONTACT and falls back", async () => {
+    const fetchMock = headerCheckingFetch();
+    vi.stubGlobal("fetch", fetchMock);
+    const { client } = await load({ SCRYFALL_CONTACT: "a".repeat(257) });
+    await client.callTool({ name: "card_named", arguments: { name: "Black Lotus" } });
+    const ua = (fetchMock.mock.calls[0][1] as any).headers["User-Agent"];
+    expect(ua).toContain("github.com/haksanlulz/mcp-scryfall");
+    expect(ua).not.toContain("a".repeat(257));
+    expect(logged.mock.calls.map((c: any[]) => String(c[0])).join("\n")).toMatch(
+      /ignoring SCRYFALL_CONTACT/,
+    );
+  });
+
   it("falls back to the repository URL when SCRYFALL_CONTACT is empty", async () => {
     // The bundle's user_config field is optional, so an install where the user
     // leaves it blank substitutes an empty string rather than omitting the

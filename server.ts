@@ -6,9 +6,26 @@ import {
 
 // scryfall etiquette: ~100ms between requests + descriptive UA; SCRYFALL_CONTACT env adds a contact
 const SCRYFALL = "https://api.scryfall.com";
-// || not ?? because an empty SCRYFALL_CONTACT would still need the fallback
-const CONTACT =
-  process.env.SCRYFALL_CONTACT || "https://github.com/haksanlulz/mcp-scryfall";
+// SCRYFALL_CONTACT is free text from the .mcpb install dialog and goes straight
+// into a header. fetch refuses a header value holding CR, LF or NUL, so a pasted
+// line break would make every request throw an opaque error. Accept printable
+// ASCII up to CONTACT_MAX_LEN; otherwise say so on stderr and use the fallback.
+// Empty is the unset case (an optional bundle field sends ""), so no notice.
+const CONTACT_FALLBACK = "https://github.com/haksanlulz/mcp-scryfall";
+const CONTACT_MAX_LEN = 256;
+function contactFromEnv(): string {
+  const raw = process.env.SCRYFALL_CONTACT;
+  if (raw === undefined || raw === "") return CONTACT_FALLBACK;
+  if (raw.length > CONTACT_MAX_LEN || !/^[\x20-\x7e]+$/.test(raw)) {
+    console.error(
+      `mcp-scryfall: ignoring SCRYFALL_CONTACT=${JSON.stringify(raw.slice(0, 80))}` +
+        ` (want printable ASCII, at most ${CONTACT_MAX_LEN} characters); using ${CONTACT_FALLBACK}`,
+    );
+    return CONTACT_FALLBACK;
+  }
+  return raw;
+}
+const CONTACT = contactFromEnv();
 const UA = `mcp-scryfall/1.1 (${CONTACT})`;
 const DELAY_MS = 100;
 
