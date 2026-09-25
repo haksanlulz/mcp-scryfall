@@ -166,7 +166,7 @@ npm run smoke    # live: spawns the real server over stdio and calls Scryfall on
 
 Tiers split by script, with no markers. `npm test`, `npm run typecheck` and `npm run bundle` are the gate and all run in CI; `npm run smoke` is a manual check against the live API and costs about 13 requests, so space repeated runs; three back to back earned a real 429 on 2026-09-14.
 
-Counts as of 2026-09-15: 643 lines of server source (`wc -l index.ts server.ts`; `smoke.ts` is 283 more and is the live tier, and `scripts/bundle.mjs` 197 more and is build tooling, neither of them app code), 1,670 lines of tests (`wc -l test/*.ts`), 83 tests across 5 files, the number `npm test` reports. `grep -c "^\s*it(" test/*.ts` sums to 75, because two cases are table-driven: a `for` loop over three values, and an `it.each` over six that the pattern does not match at all. 75 + 2 + 6 = 83. Trust the runner.
+Counts as of 2026-09-25: 789 lines of server source (`wc -l index.ts server.ts`; `smoke.ts` is 283 more and is the live tier, and `scripts/bundle.mjs` 197 more and is build tooling, neither of them app code), 1,805 lines of tests (`wc -l test/*.ts`), 90 tests across 5 files, the number `npm test` reports. `grep -c "^\s*it(" test/*.ts` sums to 82, because two cases are table-driven: a `for` loop over three values, and an `it.each` over six that the pattern does not match at all. 82 + 2 + 6 = 90. Trust the runner.
 
 What they cover:
 
@@ -191,7 +191,7 @@ On argument validation: neutering `optionalString`'s type check fails exactly th
 
 On the request path: moving the body read back outside the retry wrapper (`const raw = await res.text()` with no catch of its own) fails exactly two, 81 pass: a body that dies mid-read is then seen once instead of three times. Changing `COLLECTION_MAX` from 75 to 74 fails exactly one, `card_collection chunks past Scryfall's 75-identifier cap and merges pages`; 82 pass.
 
-The bundle rung is probed the same way, through its own channel: renaming one tool in `server.ts`'s `TOOLS` array makes `npm run bundle` print `FAIL  bundle: tools/list is exactly the 7 tools` and **exit 1** (measured unpiped, since `$?` after a pipe is the last stage's), and the offline suite fails 2 of 83 on the same mutation. Restored, `npm run bundle` exits 0 and packs 3.2 MB / 10.5 MB unpacked / 2,268 files.
+The bundle rung is probed the same way, through its own channel: renaming one tool in `server.ts`'s `TOOLS` array makes `npm run bundle` print `FAIL  bundle: tools/list is exactly the 7 tools` and **exit 1** (measured unpiped, since `$?` after a pipe is the last stage's), and the offline suite fails 2 of 90 on the same mutation (re-measured 2026-09-25). Restored, `npm run bundle` exits 0 and packs 3.2 MB / 10.5 MB unpacked / 2,268 files.
 
 Call-count assertions (`toHaveBeenCalledTimes`, `not.toHaveBeenCalled`) appear at 31 sites, 21 in `test/server.test.ts` and 10 in `test/env-config.test.ts` (`grep -c "toHaveBeenCalledTimes\|not\.toHaveBeenCalled" test/*.ts`). Each one pins a contract: one POST per 75-chunk, no request on rejected input, cache hit vs miss, retry attempts, an env knob taking effect. Most sit next to an assertion on the payload or result; `never caches card_random` is the case where the call count is the only assertion, because two fetches *is* the not-cached contract. Policy: assert behavior and payloads, never bare invocation.
 
