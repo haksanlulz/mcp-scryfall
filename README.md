@@ -50,7 +50,7 @@ All four knobs are environment variables, all optional. None is a credential; Sc
 
 | Variable | Default | Effect |
 |---|---|---|
-| `SCRYFALL_CONTACT` | this repository's URL | Added to the `User-Agent`, per Scryfall's API guidelines, so they can reach you about traffic. |
+| `SCRYFALL_CONTACT` | this repository's URL | Added to the `User-Agent`, per Scryfall's API guidelines, so they can reach you about traffic. Printable ASCII only, 256 characters or fewer. Any other value is ignored and the default is used. The only notice goes to stderr, which most MCP hosts don't show. |
 | `SCRYFALL_CACHE_TTL_MS` | `86400000` (24 h) | Lifetime of a cached GET response. `0` turns the cache off. |
 | `SCRYFALL_CACHE_MAX` | `500` | LRU entry cap for that cache. Floor 1. |
 | `SCRYFALL_MAX_ATTEMPTS` | `3` | Attempts per request, counting the first. Floor 1, ceiling 10. |

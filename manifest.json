@@ -43,7 +43,7 @@
     "scryfall_contact": {
       "type": "string",
       "title": "Contact (optional)",
-      "description": "An email or URL added to the User-Agent, which Scryfall's API guidelines ask clients to send so they can reach you about traffic. Not a credential, and nothing is sent to anyone but Scryfall. Leave blank to use this project's repository URL.",
+      "description": "An email or URL added to the User-Agent, which Scryfall's API guidelines ask clients to send so they can reach you about traffic. Not a credential, and nothing is sent to anyone but Scryfall. Printable ASCII only, 256 characters or fewer. Any other value is ignored and this project's repository URL is used instead. Leave blank to use that default.",
       "required": false,
       "sensitive": false
     }
