@@ -210,6 +210,14 @@ Requests time out after 15 s. GET responses are cached in memory, which Scryfall
 - Requests never run in parallel. Everything funnels through the one 100 ms-spaced queue, so a large `card_collection` (sequential 75-identifier POSTs) takes proportionally longer. Each request times out after 15 s.
 - Thin passthrough: beyond the compact summaries, results are Scryfall's data as returned. No legality checking, no rules logic.
 
+## What I'd do differently
+
+- **Write outputs for the model reading them.** Asked what set Lightning Bolt is from, a chat model answered with the card's newest printing, because that is what `/cards/named` returns. `reprint: true` was in the payload, and a system-prompt rule telling the model to honor it did not hold. `card_named` and `card_fuzzy` now carry a `record_scope` sentence and a `printings` list with `first_printing` pulled out. Listing the answer works better than pointing at it.
+- **Rate-limit requests, not tool calls.** The 100 ms pacer was stamped once per tool call, so retries inside a call bypassed it. That broke Scryfall's spacing rule on the 429 path, the one moment Scryfall had asked for less traffic. The stamp now sits on each `fetch`, and a test measures the gap between two concurrent calls across a retry.
+- **A test can exercise a bug and still pass.** The suite sent `Retry-After: 0` on purpose and asserted only call counts, which are the same at 0 ms and 100 ms. The wait is now measured on a fake clock.
+- **Mocks cannot see an upstream change.** Scryfall renamed its bulk-data fields and moved to JSONL. The mocked test stayed green and the tool description went on naming fields that no longer existed. The live smoke now checks every field the description names against a real payload.
+- **Make the live check able to fail.** Smoke's upstream checks treated Scryfall's `{"object":"error"}` body as a pass, so a 404 or a 429 read green. Each check now requires `res.ok` plus a property of the real card or list it fetched.
+
 ## AI assistance
 
 This project was built with AI assistance (Claude). Correctness is established by the mocked-transport test suite (`npm test`: every tool, error paths, chunking, throttle serialization; no network), a strict typecheck, a smoke run that spawns the real server over stdio and calls live Scryfall once per tool (`npm run smoke`), and daily real use for deckbuilding. I review the code and stand behind it.
