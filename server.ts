@@ -678,13 +678,35 @@ const TOOLS = [
   },
 ];
 
+// MCP security audit 2026-11-25: every tool declares its hints; withAnnotations
+// refuses to list a tool that has none, so a new tool cannot ship unclassified.
+// Every tool here only reads, from Scryfall's public API (open world).
+const READ_REMOTE = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true };
+const TOOL_ANNOTATIONS: Record<string, typeof READ_REMOTE> = {
+  card_named: READ_REMOTE,
+  card_fuzzy: READ_REMOTE,
+  card_search: READ_REMOTE,
+  card_collection: READ_REMOTE,
+  card_random: READ_REMOTE,
+  card_rulings: READ_REMOTE,
+  bulk_default: READ_REMOTE,
+};
+
+function withAnnotations<T extends { name: string }>(tools: T[]): (T & { annotations: (typeof TOOL_ANNOTATIONS)[string] })[] {
+  return tools.map((t) => {
+    const annotations = TOOL_ANNOTATIONS[t.name];
+    if (!annotations) throw new Error(`tool ${t.name} has no annotations: add it to TOOL_ANNOTATIONS`);
+    return { ...t, annotations };
+  });
+}
+
 export function createServer(): Server {
   const server = new Server(
     { name: "mcp-scryfall", version: "1.1.0" },
     { capabilities: { tools: {} } },
   );
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: withAnnotations(TOOLS) }));
 
   server.setRequestHandler(CallToolRequestSchema, async (req) => {
     const { name, arguments: args = {} } = req.params;
