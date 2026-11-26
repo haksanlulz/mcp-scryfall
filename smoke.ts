@@ -99,7 +99,7 @@ class StdioSession {
 
 /** Tool results arrive as a content array of text parts holding JSON. */
 function payload(result: any): any {
-  return JSON.parse(result?.content?.[0]?.text ?? "{}");
+  return JSON.parse(result?.content?.[1]?.text ?? "{}");
 }
 
 /* ------------------------------------------- phase 1: stdio (real channel) */

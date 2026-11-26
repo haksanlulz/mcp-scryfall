@@ -3,7 +3,7 @@
   "manifest_version": "0.3",
   "name": "mcp-scryfall",
   "display_name": "Scryfall (Magic: The Gathering)",
-  "version": "1.1.0",
+  "version": "2.0.0",
   "description": "Live Magic: The Gathering card lookup via the Scryfall API.",
   "long_description": "LLMs misremember card names, costs, and rules text. This server looks them up on live Scryfall instead: exact and fuzzy name lookup, query-syntax search, batch decklist resolution with an explicit not_found list, official rulings, and the bulk-data endpoint list. Read-only — it never writes anything to Scryfall or anywhere else.",
   "author": {

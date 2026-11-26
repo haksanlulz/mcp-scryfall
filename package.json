@@ -1,6 +1,6 @@
 {
   "name": "mcp-scryfall",
-  "version": "1.1.0",
+  "version": "2.0.0",
   "type": "module",
   "description": "MCP (Model Context Protocol) server for live Magic: The Gathering card lookup via the Scryfall API.",
   "keywords": [

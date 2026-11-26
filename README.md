@@ -18,6 +18,8 @@ LLMs misremember card names, costs, and rules text. This looks them up on live S
 
 The compact summary returned by `card_search` and `card_collection` is `name`, `mana_cost`, `type_line`, `cmc`, `set`, `collector_number`, `oracle_text`, `power`, `toughness`, `color_identity`, `legal_commander`. Every key is always present, `null` when the card has no value, so "this creature has no power" is distinguishable from "that field wasn't returned".
 
+**Result shape (2.0.0).** Every result opens with a fixed label block, `[UNTRUSTED THIRD-PARTY CONTENT] ...`, telling the model that the next block is card data from Scryfall and never instructions; the JSON is in `content[1]`. A program that parses results should skip the block whose text starts with `[UNTRUSTED THIRD-PARTY CONTENT]`. Every tool declares MCP annotations: read-only, non-destructive, idempotent, open world.
+
 ## Install
 
 ```bash

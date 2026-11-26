@@ -26,7 +26,7 @@ function mockFetch(payload: unknown, status = 200) {
 beforeEach(() => clearScryfallCache());
 
 function bodyOf(res: any) {
-  return JSON.parse(res.content[0].text);
+  return JSON.parse(res.content[1].text);
 }
 
 describe("mcp-scryfall server", () => {
