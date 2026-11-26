@@ -1,3 +1,4 @@
+import { toolError } from "./helpers.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -276,9 +277,9 @@ describe("mcp-scryfall server", () => {
     const fetchMock = mockFetch({ object: "list", total_cards: 0, data: [] });
     vi.stubGlobal("fetch", fetchMock);
     const client = await connect();
-    await expect(
+    await expect(toolError(
       client.callTool({ name: "card_search", arguments: { q: "t:goblin", ful: true } }),
-    ).rejects.toThrow(/card_search does not accept "ful" \(did you mean "full"\?\)/);
+    )).rejects.toThrow(/card_search does not accept "ful" \(did you mean "full"\?\)/);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -286,9 +287,9 @@ describe("mcp-scryfall server", () => {
     const fetchMock = mockFetch({ object: "list", total_cards: 0, data: [] });
     vi.stubGlobal("fetch", fetchMock);
     const client = await connect();
-    await expect(
+    await expect(toolError(
       client.callTool({ name: "card_search", arguments: { q: "t:goblin", full: "yes" } }),
-    ).rejects.toThrow(/card_search requires full to be a boolean/);
+    )).rejects.toThrow(/card_search requires full to be a boolean/);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -376,9 +377,9 @@ describe("mcp-scryfall server", () => {
     const fetchMock = mockFetch({ object: "list", total_cards: 1, has_more: false, data: [] });
     vi.stubGlobal("fetch", fetchMock);
     const client = await connect();
-    await expect(
+    await expect(toolError(
       client.callTool({ name: "card_search", arguments: { q: "t:goblin", page: 0 } }),
-    ).rejects.toThrow(/page must be an integer >= 1/);
+    )).rejects.toThrow(/page must be an integer >= 1/);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -388,9 +389,9 @@ describe("mcp-scryfall server", () => {
     const fetchMock = mockFetch({ object: "list", total_cards: 1, has_more: false, data: [] });
     vi.stubGlobal("fetch", fetchMock);
     const client = await connect();
-    await expect(
+    await expect(toolError(
       client.callTool({ name: "card_search", arguments: { q: "t:goblin", page: "abc" } }),
-    ).rejects.toThrow(/page must be an integer >= 1/);
+    )).rejects.toThrow(/page must be an integer >= 1/);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -401,9 +402,9 @@ describe("mcp-scryfall server", () => {
     const fetchMock = mockFetch({ object: "list", total_cards: 1, has_more: false, data: [] });
     vi.stubGlobal("fetch", fetchMock);
     const client = await connect();
-    await expect(
+    await expect(toolError(
       client.callTool({ name: "card_search", arguments: { q: "t:goblin", page: ["2"] } }),
-    ).rejects.toThrow(/page must be an integer >= 1/);
+    )).rejects.toThrow(/page must be an integer >= 1/);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -426,9 +427,9 @@ describe("mcp-scryfall server", () => {
       ),
     );
     const client = await connect();
-    await expect(
+    await expect(toolError(
       client.callTool({ name: "card_search", arguments: { q: "t:zzzznotatype" } }),
-    ).rejects.toThrow(/match any cards/);
+    )).rejects.toThrow(/match any cards/);
   });
 
   it("card_random hits /cards/random with no query by default", async () => {
@@ -667,24 +668,24 @@ describe("mcp-scryfall server", () => {
       ),
     );
     const client = await connect();
-    await expect(
+    await expect(toolError(
       client.callTool({
         name: "card_collection",
         arguments: { identifiers: ["Lightning Bolt"] },
       }),
-    ).rejects.toThrow(/All of your identifiers were invalid/);
+    )).rejects.toThrow(/All of your identifiers were invalid/);
   });
 
   it("card_collection rejects bad input before any request", async () => {
     const fetchMock = mockFetch({ object: "list", not_found: [], data: [] });
     vi.stubGlobal("fetch", fetchMock);
     const client = await connect();
-    await expect(
+    await expect(toolError(
       client.callTool({ name: "card_collection", arguments: { identifiers: [] } }),
-    ).rejects.toThrow(/non-empty/);
-    await expect(
+    )).rejects.toThrow(/non-empty/);
+    await expect(toolError(
       client.callTool({ name: "card_collection", arguments: { identifiers: [42] } }),
-    ).rejects.toThrow(/invalid identifier/);
+    )).rejects.toThrow(/invalid identifier/);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -697,12 +698,12 @@ describe("mcp-scryfall server", () => {
     const fetchMock = mockFetch({ object: "card", name: "X" });
     vi.stubGlobal("fetch", fetchMock);
     const client = await connect();
-    await expect(
+    await expect(toolError(
       client.callTool({ name: "card_named", arguments: {} }),
-    ).rejects.toThrow(/card_named requires a non-empty name/);
-    await expect(
+    )).rejects.toThrow(/card_named requires a non-empty name/);
+    await expect(toolError(
       client.callTool({ name: "card_named", arguments: { name: "   " } }),
-    ).rejects.toThrow(/card_named requires a non-empty name/);
+    )).rejects.toThrow(/card_named requires a non-empty name/);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -710,9 +711,9 @@ describe("mcp-scryfall server", () => {
     const fetchMock = mockFetch({ object: "card", name: "X" });
     vi.stubGlobal("fetch", fetchMock);
     const client = await connect();
-    await expect(
+    await expect(toolError(
       client.callTool({ name: "card_fuzzy", arguments: {} }),
-    ).rejects.toThrow(/card_fuzzy requires a non-empty name/);
+    )).rejects.toThrow(/card_fuzzy requires a non-empty name/);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -720,9 +721,9 @@ describe("mcp-scryfall server", () => {
     const fetchMock = mockFetch({ object: "list", total_cards: 0, data: [] });
     vi.stubGlobal("fetch", fetchMock);
     const client = await connect();
-    await expect(
+    await expect(toolError(
       client.callTool({ name: "card_search", arguments: {} }),
-    ).rejects.toThrow(/card_search requires a non-empty q/);
+    )).rejects.toThrow(/card_search requires a non-empty q/);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -741,7 +742,7 @@ describe("mcp-scryfall server", () => {
     const fetchMock = mockFetch({ object: "card", name: "X", id: "abc" });
     vi.stubGlobal("fetch", fetchMock);
     const client = await connect();
-    await expect(client.callTool({ name: tool, arguments: args })).rejects.toThrow(msg);
+    await expect(toolError(client.callTool({ name: tool, arguments: args }))).rejects.toThrow(msg);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -855,9 +856,9 @@ describe("mcp-scryfall server", () => {
       mockFetch({ object: "error", status: 429, details: "rate limited" }, 429),
     );
     const client = await connect();
-    await expect(
+    await expect(toolError(
       client.callTool({ name: "card_named", arguments: { name: "Black Lotus" } }),
-    ).rejects.toThrow(/rate limited/);
+    )).rejects.toThrow(/rate limited/);
   });
 
   it("card_named surfaces a miss (404) as an error carrying the detail", async () => {
@@ -869,9 +870,9 @@ describe("mcp-scryfall server", () => {
       ),
     );
     const client = await connect();
-    await expect(
+    await expect(toolError(
       client.callTool({ name: "card_named", arguments: { name: "zzznotacard" } }),
-    ).rejects.toThrow(/No cards found/);
+    )).rejects.toThrow(/No cards found/);
   });
 
   it("throws a non-JSON error including the status when the body is not JSON", async () => {
@@ -885,9 +886,9 @@ describe("mcp-scryfall server", () => {
       ),
     );
     const client = await connect();
-    await expect(
+    await expect(toolError(
       client.callTool({ name: "card_random", arguments: {} }),
-    ).rejects.toThrow(/non-JSON \(status 502\)/);
+    )).rejects.toThrow(/non-JSON \(status 502\)/);
   });
 
   it("card_rulings resolves a name to an id, then fetches that card's rulings", async () => {
@@ -936,9 +937,9 @@ describe("mcp-scryfall server", () => {
   it("card_rulings rejects when given neither a name nor an id", async () => {
     vi.stubGlobal("fetch", mockFetch({ object: "list", data: [] }));
     const client = await connect();
-    await expect(
+    await expect(toolError(
       client.callTool({ name: "card_rulings", arguments: {} }),
-    ).rejects.toThrow(/needs a name or a Scryfall id/);
+    )).rejects.toThrow(/needs a name or a Scryfall id/);
   });
 
   it("card_rulings surfaces an unknown name as an error, not as empty rulings", async () => {
@@ -948,9 +949,9 @@ describe("mcp-scryfall server", () => {
       mockFetch({ object: "error", status: 404, details: "No card found." }, 404),
     );
     const client = await connect();
-    await expect(
+    await expect(toolError(
       client.callTool({ name: "card_rulings", arguments: { name: "Nonexistent Card" } }),
-    ).rejects.toThrow(/No card found/);
+    )).rejects.toThrow(/No card found/);
   });
 
   it("a hung request is bounded by the abort signal and does not deadlock later calls", async () => {
@@ -972,9 +973,9 @@ describe("mcp-scryfall server", () => {
     );
     vi.stubGlobal("fetch", hungUntilAbort);
     const client = await connect();
-    await expect(
+    await expect(toolError(
       client.callTool({ name: "card_random", arguments: {} }),
-    ).rejects.toThrow();
+    )).rejects.toThrow();
     // The queue must recover: a later call with a healthy fetch still completes.
     vi.stubGlobal("fetch", mockFetch({ object: "card", name: "Island" }));
     const res = await client.callTool({ name: "card_named", arguments: { name: "Island" } });
@@ -1036,8 +1037,8 @@ describe("response cache", () => {
     const fail = mockFetch({ object: "error", status: 404, details: "no card" }, 404);
     vi.stubGlobal("fetch", fail);
     const client = await connect();
-    await expect(client.callTool({ name: "card_named", arguments: { name: "Nope" } })).rejects.toThrow();
-    await expect(client.callTool({ name: "card_named", arguments: { name: "Nope" } })).rejects.toThrow();
+    await expect(toolError(client.callTool({ name: "card_named", arguments: { name: "Nope" } }))).rejects.toThrow();
+    await expect(toolError(client.callTool({ name: "card_named", arguments: { name: "Nope" } }))).rejects.toThrow();
     // a cached 404 would leave this at 1 and pin the failure for the whole process
     expect(fail).toHaveBeenCalledTimes(2);
   });
@@ -1068,7 +1069,7 @@ describe("transient-failure retry", () => {
     const miss = mockFetch({ object: "error", status: 404, details: "no card" }, 404);
     vi.stubGlobal("fetch", miss);
     const client = await connect();
-    await expect(client.callTool({ name: "card_named", arguments: { name: "Nope" } })).rejects.toThrow();
+    await expect(toolError(client.callTool({ name: "card_named", arguments: { name: "Nope" } }))).rejects.toThrow();
     expect(miss).toHaveBeenCalledTimes(1);
   });
 
@@ -1076,7 +1077,7 @@ describe("transient-failure retry", () => {
     const down = mockFetch({ object: "error", status: 503, details: "upstream unavailable" }, 503);
     vi.stubGlobal("fetch", down);
     const client = await connect();
-    await expect(client.callTool({ name: "card_named", arguments: { name: "X" } }))
+    await expect(toolError(client.callTool({ name: "card_named", arguments: { name: "X" } })))
       .rejects.toThrow(/upstream unavailable/);
     expect(down).toHaveBeenCalledTimes(3);
   });
@@ -1102,9 +1103,9 @@ describe("transient-failure retry", () => {
     });
     vi.stubGlobal("fetch", dyingBody);
     const client = await connect();
-    await expect(
+    await expect(toolError(
       client.callTool({ name: "card_named", arguments: { name: "X" } }),
-    ).rejects.toThrow(/aborted due to timeout/);
+    )).rejects.toThrow(/aborted due to timeout/);
     expect(dyingBody).toHaveBeenCalledTimes(3);
   });
 

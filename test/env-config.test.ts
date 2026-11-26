@@ -1,3 +1,4 @@
+import { toolError } from "./helpers.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
@@ -118,9 +119,9 @@ describe("env knob parsing", () => {
       );
       vi.stubGlobal("fetch", down);
       const { client } = await load({ SCRYFALL_MAX_ATTEMPTS: bad });
-      await expect(
+      await expect(toolError(
         client.callTool({ name: "card_named", arguments: { name: "X" } }),
-      ).rejects.toThrow(/upstream unavailable/);
+      )).rejects.toThrow(/upstream unavailable/);
       expect(down).toHaveBeenCalledTimes(3);
     });
   }
@@ -207,9 +208,9 @@ describe("env knob parsing", () => {
     );
     vi.stubGlobal("fetch", down);
     const { client, envInt } = await load({ SCRYFALL_MAX_ATTEMPTS: "3000" });
-    await expect(
+    await expect(toolError(
       client.callTool({ name: "card_named", arguments: { name: "X" } }),
-    ).rejects.toThrow(/upstream unavailable/);
+    )).rejects.toThrow(/upstream unavailable/);
     expect(down).toHaveBeenCalledTimes(3);
     expect(String(logged.mock.calls[0][0])).toMatch(
       /SCRYFALL_MAX_ATTEMPTS="3000".*integer 1\.\.10.*using 3/,
@@ -229,9 +230,9 @@ describe("env knob parsing", () => {
     );
     vi.stubGlobal("fetch", down);
     const { client } = await load({ SCRYFALL_MAX_ATTEMPTS: "1" });
-    await expect(
+    await expect(toolError(
       client.callTool({ name: "card_named", arguments: { name: "X" } }),
-    ).rejects.toThrow(/upstream unavailable/);
+    )).rejects.toThrow(/upstream unavailable/);
     expect(down).toHaveBeenCalledTimes(1);
   });
 });

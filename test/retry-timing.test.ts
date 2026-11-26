@@ -1,3 +1,4 @@
+import { toolError } from "./helpers.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -219,7 +220,7 @@ describe("retry timing", () => {
       }),
     );
     const a = client.callTool({ name: "card_named", arguments: { name: "Card A" } });
-    const aRejects = expect(a).rejects.toThrow(/upstream down/);
+    const aRejects = expect(toolError(a)).rejects.toThrow(/upstream down/);
     await vi.advanceTimersByTimeAsync(RUN_MS);
     await aRejects;
     expect(at).toHaveLength(3);

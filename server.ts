@@ -324,6 +324,9 @@ function summarizeCard(card: any) {
 
 // Scryfall caps POST /cards/collection at 75 identifiers per request
 const COLLECTION_MAX = 75;
+// One card_collection call takes at most this many identifiers (MCP security audit 2026-11-25).
+// 1000 is about 14 chunked POSTs: a large cube fits; an unbounded list could queue thousands.
+export const COLLECTION_CALL_MAX = 1000;
 
 // The low-level Server class does not validate arguments against inputSchema --
 // `required` there is advisory to the client, and a missing argument simply
@@ -715,6 +718,20 @@ function withUntrustedLabel<A extends unknown[], R extends { content: unknown[] 
   };
 }
 
+// MCP security audit 2026-11-25: a failed call is a tool result with isError and the reason as text, so
+// the model sees why (a JSON-RPC error is not shown to it by every client). An unknown tool stays a
+// protocol error, as the MCP spec asks.
+function withToolErrors<Q extends { params: { name: string } }, R>(handler: (req: Q) => Promise<R>) {
+  return async (req: Q): Promise<R | { content: { type: "text"; text: string }[]; isError: true }> => {
+    try {
+      return await handler(req);
+    } catch (err) {
+      if (!TOOLS.some((t) => t.name === req.params.name)) throw err;
+      return { content: [{ type: "text" as const, text: err instanceof Error ? err.message : String(err) }], isError: true };
+    }
+  };
+}
+
 export function createServer(): Server {
   const server = new Server(
     { name: "mcp-scryfall", version: "2.0.0" },
@@ -723,7 +740,7 @@ export function createServer(): Server {
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: withAnnotations(TOOLS) }));
 
-  server.setRequestHandler(CallToolRequestSchema, withUntrustedLabel(async (req) => {
+  server.setRequestHandler(CallToolRequestSchema, withUntrustedLabel(withToolErrors(async (req) => {
     const { name, arguments: args = {} } = req.params;
     const accepted = acceptedArgsOf(TOOLS, name);
     if (accepted) validateArgs(name, accepted, args as Record<string, unknown>);
@@ -763,6 +780,11 @@ export function createServer(): Server {
         if (!Array.isArray(args.identifiers) || args.identifiers.length === 0) {
           throw new Error(
             "card_collection requires a non-empty identifiers array (card-name strings or identifier objects)",
+          );
+        }
+        if (args.identifiers.length > COLLECTION_CALL_MAX) {
+          throw new Error(
+            `card_collection takes at most ${COLLECTION_CALL_MAX} identifiers in one call (got ${args.identifiers.length}); split the list across calls`,
           );
         }
         const identifiers = args.identifiers.map(toIdentifier);
@@ -814,7 +836,7 @@ export function createServer(): Server {
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
-  }));
+  })));
 
   return server;
 }

@@ -140,12 +140,14 @@ try {
 
   // The grounding probe: a name no card has must surface as an error, never as
   // a nearest match. A caller checking a deck list depends on exactly this.
+  // Since 2.0.0 the error is a result with isError (the reason in content[1]), not a JSON-RPC error.
   let fabricatedErrored = false;
   try {
-    await session.rpc("tools/call",
+    const r: any = await session.rpc("tools/call",
       { name: "card_named", arguments: { name: "Xyzzy Fabricated Nonexistent Card 99999" } });
+    fabricatedErrored = r?.isError === true && /not found|No card/i.test(String(r?.content?.[1]?.text));
   } catch {
-    fabricatedErrored = true;
+    fabricatedErrored = false;
   }
   check("stdio: a fabricated name errors (never a guessed card)", fabricatedErrored);
 
