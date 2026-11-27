@@ -1,0 +1,197 @@
+[
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    },
+    "description": "List Scryfall bulk-data endpoints. Returns an array of items carrying type, name, updated_at, compressed_size and jsonl_download_uri; the caller fetches jsonl_download_uri directly. Payloads are gzipped JSONL — one card object per line, not a single JSON array. Useful for offline corpus building.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "name": "bulk_default"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    },
+    "description": "Batch lookup of many cards in one call (POST /cards/collection) — use this for decklists instead of one card_named call per card. Identifiers are exact-name strings (not fuzzy) and/or Scryfall identifier objects: {name}, {id}, {name, set}, {set, collector_number}. Scryfall caps one POST at 75 identifiers; longer lists are chunked into sequential rate-limited POSTs transparently. Returns {requested, found, not_found, data}: check not_found — it lists the identifiers Scryfall could not resolve. data holds compact summaries (with oracle_text) by default; pass full:true for raw card objects.",
+    "inputSchema": {
+      "properties": {
+        "full": {
+          "description": "Return raw Scryfall card objects instead of compact summaries (default false)",
+          "type": "boolean"
+        },
+        "identifiers": {
+          "description": "Cards to fetch: exact-name strings and/or identifier objects ({name}, {id}, {name, set}, {set, collector_number})",
+          "items": {
+            "anyOf": [
+              {
+                "description": "Exact card name",
+                "type": "string"
+              },
+              {
+                "description": "Scryfall identifier object: {name}, {id}, {name, set}, or {set, collector_number}",
+                "properties": {
+                  "collector_number": {
+                    "description": "Collector number (with set)",
+                    "type": "string"
+                  },
+                  "id": {
+                    "description": "Scryfall card UUID",
+                    "type": "string"
+                  },
+                  "name": {
+                    "description": "Exact card name",
+                    "type": "string"
+                  },
+                  "set": {
+                    "description": "Set code (with name or collector_number)",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            ]
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "identifiers"
+      ],
+      "type": "object"
+    },
+    "name": "card_collection"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    },
+    "description": "Fuzzy-name lookup of a Magic card. Handles typos, partial names, and alternate spellings. Returns the full card object for ONE printing (the most recent) plus the same `printings` list, `first_printing` and record_scope as card_named — the set fields are that printing's, not the card's origin. No close match surfaces as an error carrying Scryfall's details. Use when the caller's spelling may be wrong or incomplete.",
+    "inputSchema": {
+      "properties": {
+        "name": {
+          "description": "Approximate card name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "name": "card_fuzzy"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    },
+    "description": "Exact-name lookup of a Magic card. Returns the full Scryfall card object (oracle_text, mana_cost, type_line, P/T, legalities, etc.) on a hit, plus a record_scope line. The object is ONE printing — the most recent unless `set` is given — so `set`/`set_name`/`released_at` describe that printing, not where the card first appeared; `reprint: true` means it debuted earlier. The response also carries `printings` (every printing, oldest first: set, set_name, released_at, rarity, collector_number), `printings_count` and `first_printing`, and record_scope says all of this in words. A miss (no card by that exact name) surfaces as an error carrying Scryfall's details; try card_fuzzy instead. Use when the caller has the exact card name.",
+    "inputSchema": {
+      "properties": {
+        "name": {
+          "description": "Exact card name (case-insensitive)",
+          "type": "string"
+        },
+        "set": {
+          "description": "Optional 3-letter set code (e.g. 'mh2'); restricts to that printing",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "name": "card_named"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    },
+    "description": "A random Magic card. An optional q= filter uses the same Scryfall query syntax as card_search. Returns the full card object.",
+    "inputSchema": {
+      "properties": {
+        "q": {
+          "description": "Optional Scryfall query to restrict the random pool",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "card_random"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    },
+    "description": "Official Wizards/Scryfall rulings for one card — the errata and corner-case answers that are not in the oracle text. Give an exact name (resolved via an exact lookup first) or a Scryfall card id to skip that hop. Returns Scryfall's rulings list {object:'list', data:[{published_at, comment, source}]}; empty data means the card has no rulings, which is itself an answer.",
+    "inputSchema": {
+      "properties": {
+        "id": {
+          "description": "Scryfall card id (skips the name-resolution request)",
+          "type": "string"
+        },
+        "name": {
+          "description": "Exact card name",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "card_rulings"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    },
+    "description": "Scryfall query-syntax search (e.g. 'is:fetchland t:land', 'c:rb cmc<=2 t:creature', 'o:\"draw a card\" pow=1'). Returns compact per-card summaries plus total_cards/has_more by default to keep responses small; pass full:true for the raw Scryfall response. A query that matches no cards is NOT an empty list — Scryfall answers it with a 404, which surfaces as an error carrying Scryfall's details. That error is the answer 'no cards match'; do not retry it as a tool failure. Full syntax: https://scryfall.com/docs/syntax",
+    "inputSchema": {
+      "properties": {
+        "full": {
+          "description": "Return the raw Scryfall response instead of compact summaries (default false)",
+          "type": "boolean"
+        },
+        "order": {
+          "description": "Sort order: name, cmc, color, released, etc. (default: name)",
+          "type": "string"
+        },
+        "page": {
+          "description": "Page number: an integer >= 1 (default 1). Any other value is an error.",
+          "type": "number"
+        },
+        "q": {
+          "description": "Scryfall query string",
+          "type": "string"
+        }
+      },
+      "required": [
+        "q"
+      ],
+      "type": "object"
+    },
+    "name": "card_search"
+  }
+]
