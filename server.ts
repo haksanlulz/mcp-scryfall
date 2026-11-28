@@ -738,7 +738,10 @@ export function createServer(): Server {
     { capabilities: { tools: {} } },
   );
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: withAnnotations(TOOLS) }));
+  // App standard MCP-3: every schema says additionalProperties: false, which validateArgs already enforces.
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: withAnnotations(TOOLS).map((t) => ({ ...t, inputSchema: { ...t.inputSchema, additionalProperties: false } })),
+  }));
 
   server.setRequestHandler(CallToolRequestSchema, withUntrustedLabel(withToolErrors(async (req) => {
     const { name, arguments: args = {} } = req.params;
